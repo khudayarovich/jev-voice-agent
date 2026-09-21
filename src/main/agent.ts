@@ -27,6 +27,8 @@ import { createCapture, getCapture, hideHud, showHud } from "./windows.ts";
 let speech: WhisperEngine | null = null;
 let pipeline: AudioPipeline | null = null;
 let registeredHotkey = "";
+/** Cached app names, used to repair mangled proper nouns in transcripts. */
+let knownAppNames: string[] = [];
 let starting: Promise<void> | null = null;
 
 export function getPipeline(): AudioPipeline | null {
@@ -70,6 +72,7 @@ async function doStart(): Promise<void> {
       speech,
       vad,
       makeWake: (phrases, threshold) => new WakeWord({ phrases, threshold }),
+      appNames: () => knownAppNames,
       isSelfAudioActive,
       trace: (event, data) => fileLog("pipeline", event, data ?? {}),
     },
@@ -133,6 +136,7 @@ async function primeVocabulary(): Promise<void> {
       os.listApps().catch(() => []),
       os.runningApps().catch(() => [] as string[]),
     ]);
+    knownAppNames = installed.map((a) => a.name);
     const prompt = buildVocabularyPrompt(installed, running);
     speech.setVocabulary(prompt);
     fileLog("agent", "vocabulary", { apps: installed.length, chars: prompt.length });
@@ -449,7 +453,13 @@ async function resolveConfirmation(cmd: CommandAudio, started: number): Promise<
     return;
   }
 
-  const answer = readConfirmation(cmd.transcript);
+  let answer = readConfirmation(cmd.transcript);
+
+  // Saying the same thing again is how people insist. Observed in real use:
+  // asked "Quit app? Say yes to confirm", the reply was the original command
+  // repeated, which read as "unclear" and cancelled. Repetition is agreement.
+  if (answer === "unclear" && repeatsRequest(cmd.transcript, held)) answer = "yes";
+
   fileLog("route", "confirmation", { action: held.action, answer, said: cmd.transcript });
 
   if (answer === "yes") {
@@ -486,6 +496,21 @@ async function runAction(
     fileLog("execute", "failed", { action, args, message: describe(err) });
     finish("failed", cmd, decision, action, describe(err), started, cmd.transcribeMs, decision?.ms ?? 0);
   }
+}
+
+/** Is this utterance essentially the request we are already asking about? */
+function repeatsRequest(transcript: string, held: Pending): boolean {
+  const said = transcript.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!said) return false;
+  const words = new Set(said.split(" ").filter((w) => w.length > 2));
+  const original = held.ctx.transcript
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+  if (original.length === 0) return false;
+  const overlap = original.filter((w) => words.has(w)).length / original.length;
+  return overlap >= 0.6;
 }
 
 /** Human-readable name for an action key. */

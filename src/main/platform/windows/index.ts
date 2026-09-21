@@ -50,6 +50,7 @@ export class WindowsPlatform implements PlatformAdapter {
   runAutomation(): Promise<string> { this.nope("Running automations"); }
 
   closeWindow(): Promise<void> { this.nope("Window control"); }
+  closeAppWindow(): Promise<void> { this.nope("Window control"); }
   minimizeWindow(): Promise<void> { this.nope("Window control"); }
   zoomWindow(): Promise<void> { this.nope("Window control"); }
   fullscreenWindow(): Promise<void> { this.nope("Window control"); }

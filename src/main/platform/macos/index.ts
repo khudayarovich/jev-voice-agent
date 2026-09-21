@@ -225,6 +225,20 @@ return appName & "\\n" & winTitle`;
   // --- windows -----------------------------------------------------------
 
   closeWindow = () => this.keystroke({ key: "w", modifiers: ["command"] });
+
+  /**
+   * Close a named app's window rather than whatever happens to be in front.
+   *
+   * "close the browser" used to send Cmd-W to the frontmost app, which closed
+   * a window of something else entirely if the browser was not focused.
+   */
+  async closeAppWindow(name: string): Promise<void> {
+    await this.openApp(name);
+    // Give the window server a moment to actually make it frontmost, or the
+    // keystroke lands on the previous app.
+    await new Promise((r) => setTimeout(r, 250));
+    await this.keystroke({ key: "w", modifiers: ["command"] });
+  }
   minimizeWindow = () => this.keystroke({ key: "m", modifiers: ["command"] });
   fullscreenWindow = () => this.keystroke({ key: "f", modifiers: ["command", "control"] });
 

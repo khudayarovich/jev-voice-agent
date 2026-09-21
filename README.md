@@ -111,6 +111,14 @@ one (via Spotlight), because whisper's prompt only fits about sixty names and
 cutting the list alphabetically would drop Safari, Slack and Terminal while
 keeping every utility beginning with "A".
 
+**Names are repaired after transcription too.** Recognisers fail on proper nouns
+in a specific way — the consonants survive and the vowels wander. "Claude" comes
+back as "clawed", "clod", "cloudy"; "Termius" as "termias". Since this machine
+knows exactly which applications exist, the transcript is matched against them on
+a consonant skeleton ("claude", "clawed" and "cloudy" all reduce to `cld`) and
+repaired before anything else reads it. That works whichever model is running,
+which matters more than picking the right one.
+
 ## Things it handles that are easy to get wrong
 
 - **Described, not named.** "open the browser" resolves to your actual browser.

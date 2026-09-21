@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { AppSettings } from "../../shared/types.ts";
 import { AutoGain, normalizeUtterance } from "./gain.ts";
 import { RingBuffer } from "./ring-buffer.ts";
+import { repairAppNames } from "./name-repair.ts";
 import { matchWake } from "./wake-match.ts";
 import { SAMPLE_RATE, int16ToFloat32 } from "./wav.ts";
 import type { SpeechEngine } from "./whisper.ts";
@@ -90,6 +91,8 @@ export type PipelineTrace = (event: string, data?: Record<string, unknown>) => v
 
 export interface PipelineDeps {
   speech: SpeechEngine;
+  /** App names to repair mangled proper nouns against. Refreshed as apps change. */
+  appNames?: () => string[];
   vad: VadLike;
   /** Built lazily so the wake phrase can change without rebuilding the pipeline. */
   makeWake: (phrases: string[], threshold: number) => WakeLike | null;
@@ -419,7 +422,14 @@ export class AudioPipeline extends EventEmitter {
     try {
       // Normalise the whole utterance at once. Unlike the streaming gain this
       // can see the true peak, so it needs no smoothing and cannot pump.
-      const raw = await this.deps.speech.transcribe(normalizeUtterance(audio));
+      const heard = await this.deps.speech.transcribe(normalizeUtterance(audio));
+
+      // Repair mangled app names before anything looks at the text. Recognisers
+      // fail on proper nouns specifically, and this machine knows which ones
+      // exist — "clawed" becomes "Claude" here rather than confusing the router.
+      const repaired = repairAppNames(heard, this.deps.appNames?.() ?? []);
+      if (repaired.repairs.length) this.trace("repaired", { repairs: repaired.repairs });
+      const raw = repaired.text;
       const transcribeMs = Date.now() - started;
       if (!raw) {
         this.emit("cancelled", "nothing recognised");

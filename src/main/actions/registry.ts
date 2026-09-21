@@ -53,8 +53,9 @@ export const ACTIONS = {
   }),
 
   quit_app: action({
-    describe: "Quit an application entirely, closing all of its windows.",
-    examples: ["quit safari", "close spotify", "exit terminal"],
+    describe:
+      "Quit an application entirely, closing ALL of its windows and stopping it. Use when the user says quit or exit, or asks to close an app completely, fully, or entirely.",
+    examples: ["quit safari", "exit terminal", "close spotify completely", "close the browser fully"],
     destructive: true,
     slots: { app: runningAppSlot("Which application to quit") },
     async run({ app }, os) {
@@ -101,9 +102,21 @@ export const ACTIONS = {
   }),
 
   // --- windows -----------------------------------------------------------
+  close_app_window: action({
+    describe:
+      "Close the front window of a SPECIFIC application the user named, leaving that application running.",
+    examples: ["close the browser", "close the safari window", "close chrome's window"],
+    slots: { app: runningAppSlot("Which application's window to close") },
+    async run({ app }, os) {
+      await os.closeAppWindow(app);
+      return { detail: `Closed ${app} window` };
+    },
+  }),
+
   close_window: action({
-    describe: "Close the front window only, leaving the application running.",
-    examples: ["close this window", "close the window", "close tab"],
+    describe:
+      "Close the window currently in front, leaving its application running. Use only when the user did NOT name an application.",
+    examples: ["close this window", "close the window"],
     slots: {},
     async run(_a, os) {
       await os.closeWindow();

@@ -46,6 +46,8 @@ export interface PlatformAdapter {
 
   // --- windows -----------------------------------------------------------
   closeWindow(): Promise<void>;
+  /** Bring an app forward, then close its front window. */
+  closeAppWindow(name: string): Promise<void>;
   minimizeWindow(): Promise<void>;
   zoomWindow(): Promise<void>;
   fullscreenWindow(): Promise<void>;
