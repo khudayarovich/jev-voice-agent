@@ -1,0 +1,57 @@
+/* The window itself is transparent; only the pill paints. */
+:root { color-scheme: dark; }
+html, body {
+  margin: 0; height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  /* The panel is click-through at the OS level; make sure nothing here fights it. */
+  user-select: none; -webkit-user-select: none;
+  cursor: default;
+}
+body { display: flex; align-items: flex-start; justify-content: center; padding-top: 8px; }
+
+.pill {
+  display: flex; align-items: center; gap: 10px;
+  max-width: 520px; min-width: 220px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(28, 28, 32, 0.82);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 0.5px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
+  color: #f2f2f5;
+  /* Size is fixed by design: resizing a transparent window on macOS flickers. */
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+.pill.hidden { opacity: 0; transform: translateY(-8px); pointer-events: none; }
+
+.dot {
+  flex: none; width: 9px; height: 9px; border-radius: 50%;
+  background: #8e8e93;
+  box-shadow: 0 0 0 0 rgba(255,255,255,0);
+}
+.dot.listening  { background: #30d158; animation: pulse 1.25s ease-in-out infinite; }
+.dot.thinking   { background: #0a84ff; animation: pulse 0.9s ease-in-out infinite; }
+.dot.executing  { background: #5e5ce6; }
+.dot.confirming { background: #ff9f0a; animation: pulse 0.7s ease-in-out infinite; }
+.dot.error      { background: #ff453a; }
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  50%      { box-shadow: 0 0 0 5px rgba(255,255,255,0); opacity: 0.55; }
+}
+
+.text {
+  flex: 1 1 auto;
+  /* Long transcripts clip and scroll inside a constant box rather than growing it. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left;   /* keeps the newest words visible */
+}
+.text > span { direction: ltr; unicode-bidi: embed; }
+.text.partial { opacity: 0.62; }
+.text.detail  { opacity: 0.78; font-style: normal; }
+
+.meter { flex: none; width: 34px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.16); overflow: hidden; }
+.meter > i { display: block; height: 100%; width: 0%; background: #30d158; transition: width 90ms linear; }

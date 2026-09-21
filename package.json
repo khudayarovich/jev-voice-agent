@@ -1,0 +1,65 @@
+{
+  "name": "jev-voice-agent",
+  "version": "0.1.0",
+  "description": "Voice control for macOS, routed by the Jev (TypeSafe AI) System One model",
+  "private": true,
+  "main": "dist/main/index.js",
+  "author": "f.yuldashev",
+  "license": "MIT",
+  "scripts": {
+    "icons": "node scripts/gen-icons.mjs",
+    "earcons": "node scripts/gen-earcons.mjs",
+    "assets": "npm run icons && npm run earcons",
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "start": "npm run build && electron .",
+    "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "esbuild": "^0.25.0",
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2"
+  },
+  "build": {
+    "appId": "ai.jev.voiceagent",
+    "productName": "Jev Voice Agent",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "LSUIElement": 1,
+        "NSMicrophoneUsageDescription": "Jev Voice Agent listens for the wake word and your spoken commands. Audio is transcribed entirely on this Mac.",
+        "NSAppleEventsUsageDescription": "Jev Voice Agent controls other apps to carry out the commands you speak.",
+        "NSSpeechRecognitionUsageDescription": "Jev Voice Agent can use Apple's on-device speech recognition to transcribe your commands."
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}

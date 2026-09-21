@@ -1,0 +1,180 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Jev Voice Agent</title>
+<link rel="stylesheet" href="index.css" />
+
+<div class="titlebar"></div>
+
+<div class="shell">
+  <nav class="sidebar">
+    <div class="brand">
+      <span class="brand-dot" id="brandDot"></span>
+      <div>
+        <div class="brand-name">Jev Voice Agent</div>
+        <div class="brand-state" id="brandState">Listening off</div>
+      </div>
+    </div>
+    <button class="nav" data-tab="connection" aria-current="true">Connection</button>
+    <button class="nav" data-tab="permissions">Permissions</button>
+    <button class="nav" data-tab="voice">Voice</button>
+    <button class="nav" data-tab="activity">Activity</button>
+    <div class="nav-spacer"></div>
+    <label class="listen-toggle">
+      <input type="checkbox" id="listeningToggle" />
+      <span>Listening</span>
+    </label>
+  </nav>
+
+  <main class="content">
+    <!-- ── Connection ─────────────────────────────────────────── -->
+    <section class="tab" data-tab="connection">
+      <h1>Connection</h1>
+      <p class="lede">
+        Commands are matched locally, then routed by <b>Jev</b>, TypeSafe AI's System One
+        model. Jev returns a typed decision — it never writes code or text.
+      </p>
+
+      <div class="card">
+        <label class="field">
+          <span class="label">TypeSafe API key</span>
+          <div class="row">
+            <input type="password" id="apiKey" placeholder="sk-…" spellcheck="false" autocomplete="off" />
+            <button id="saveKey" class="btn primary">Save</button>
+          </div>
+          <span class="hint" id="keyHint">Stored in the macOS Keychain. It never reaches this window again.</span>
+        </label>
+
+        <div class="row gap">
+          <button id="testKey" class="btn">Test connection</button>
+          <span id="keyStatus" class="status"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <label class="field">
+          <span class="label">Model</span>
+          <input type="text" id="model" spellcheck="false" />
+          <span class="hint">Route name. <code>jev-latest</code> tracks the current stable release.</span>
+        </label>
+        <label class="field">
+          <span class="label">API base URL <em>optional</em></span>
+          <input type="text" id="baseUrl" placeholder="https://api.typesafe.ai" spellcheck="false" />
+          <span class="hint">Leave empty for the official endpoint. Set this to use a gateway.</span>
+        </label>
+      </div>
+
+      <div class="card">
+        <label class="switch">
+          <input type="checkbox" id="offlineFallback" />
+          <span>
+            <b>Work offline when Jev is unreachable</b>
+            <small>Falls back to a local deterministic matcher. Fewer commands understood, but nothing breaks.</small>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ── Permissions ────────────────────────────────────────── -->
+    <section class="tab" data-tab="permissions" hidden>
+      <h1>Permissions</h1>
+      <p class="lede">
+        macOS grants these to a signed app identity. Each one is requested only when it is
+        first needed — nothing is demanded up front.
+      </p>
+      <div id="permList"></div>
+
+      <div class="card note" id="signingNote"></div>
+    </section>
+
+    <!-- ── Voice ──────────────────────────────────────────────── -->
+    <section class="tab" data-tab="voice" hidden>
+      <h1>Voice</h1>
+
+      <div class="card">
+        <label class="switch">
+          <input type="checkbox" id="wakeWordEnabled" />
+          <span>
+            <b>Wake word</b>
+            <small>Always listening for the phrase. Costs a little idle CPU.</small>
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="label">Wake phrases</span>
+          <input type="text" id="wakeWords" spellcheck="false" />
+          <span class="hint">
+            Comma separated. “Jev” and “Jeff” sound nearly identical, so both ship by default.
+            <b>Longer phrases are markedly more reliable</b> — “hey jeffrey” false-triggers far
+            less than the two-syllable “hey jeff”.
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="label">Wake sensitivity <output id="wakeThresholdOut"></output></span>
+          <input type="range" id="wakeThreshold" min="0.15" max="0.95" step="0.05" />
+          <span class="hint">Higher means fewer false triggers and more missed wakes.</span>
+        </label>
+      </div>
+
+      <div class="card">
+        <label class="field">
+          <span class="label">Hotkey</span>
+          <input type="text" id="hotkey" spellcheck="false" placeholder="Control+Space" />
+          <span class="hint">
+            Press once to start, again to stop. Always works, even when the room is noisy.
+            Hold-to-talk arrives with the native helper.
+          </span>
+        </label>
+      </div>
+
+      <div class="card">
+        <label class="switch">
+          <input type="checkbox" id="earcons" />
+          <span>
+            <b>Indicator sounds</b>
+            <small>Short tones for listening, success, and errors. No spoken replies.</small>
+          </span>
+        </label>
+        <label class="field">
+          <span class="label">Cue volume <output id="earconVolumeOut"></output></span>
+          <input type="range" id="earconVolume" min="0" max="1" step="0.05" />
+        </label>
+      </div>
+
+      <div class="card">
+        <label class="field">
+          <span class="label">Confidence threshold <output id="confidenceOut"></output></span>
+          <input type="range" id="confidenceThreshold" min="0.2" max="0.95" step="0.05" />
+          <span class="hint">
+            Below this, the agent asks instead of guessing. Jev reports calibrated confidence
+            for every decision, so this is a real dial, not a guess.
+          </span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="confirmDestructive" />
+          <span>
+            <b>Confirm destructive actions</b>
+            <small>Emptying the Trash, quitting without saving, shutting down.</small>
+          </span>
+        </label>
+      </div>
+
+      <div class="card">
+        <label class="switch">
+          <input type="checkbox" id="launchAtLogin" />
+          <span><b>Launch at login</b><small>Start quietly in the menu bar.</small></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ── Activity ───────────────────────────────────────────── -->
+    <section class="tab" data-tab="activity" hidden>
+      <h1>Activity</h1>
+      <p class="lede">Recent commands, with per-stage timings. Target is under 600&nbsp;ms end to end.</p>
+      <div id="logList" class="log"></div>
+      <div class="card note" id="diagNote"></div>
+    </section>
+  </main>
+</div>
+
+<script src="index.js"></script>
