@@ -4,6 +4,7 @@ import { IPC } from "../shared/ipc.ts";
 import type { AppSettings, CommandLogEntry } from "../shared/types.ts";
 import { execute, isDismissal, missingSlots, readConfirmation } from "./actions/execute.ts";
 import { ACTIONS, type ActionKey } from "./actions/registry.ts";
+import { splitCommands } from "./actions/split.ts";
 import type { ActionContext } from "./actions/types.ts";
 import { AudioPipeline, type CommandAudio, type TriggerKind } from "./audio/pipeline.ts";
 import { type RouteDecision, route } from "./jev/router.ts";
@@ -232,6 +233,16 @@ async function buildContext(transcript: string): Promise<ActionContext> {
   };
 }
 
+/** What routing one piece of a request produced. */
+interface Outcome {
+  outcome: "ok" | "rejected" | "failed" | "cancelled";
+  action: ActionKey | null;
+  detail: string;
+  decision: RouteDecision | null;
+  /** Set when the action needs a spoken yes before it may run. */
+  confirm?: { action: ActionKey; args: Record<string, string | number>; ctx: ActionContext };
+}
+
 async function handleCommand(cmd: CommandAudio): Promise<void> {
   const started = Date.now();
   fileLog("pipeline", "command", {
@@ -259,21 +270,65 @@ async function handleCommand(cmd: CommandAudio): Promise<void> {
     return;
   }
 
-  coordinator.setState("thinking", "Working out what you meant…");
+  coordinator.setState("thinking", "Working out what you meant\u2026");
 
+  // People chain instructions - "open Firefox and open YouTube" - and doing
+  // only the first half is simply not doing what was asked.
+  const parts = splitCommands(cmd.transcript);
+  if (parts.length > 1) fileLog("route", "split", { parts });
+
+  const done: string[] = [];
+  let routeMs = 0;
+  let last: Outcome | null = null;
+
+  for (const part of parts) {
+    const result = await routeOne(part, started);
+    routeMs += result.decision?.ms ?? 0;
+    last = result;
+
+    if (result.confirm) {
+      // Stop here rather than queueing the rest: asking "empty the Trash?" and
+      // then silently running two more commands afterwards would be startling.
+      pending = { ...result.confirm, askedAt: Date.now() };
+      coordinator.setState("confirming", `${phrase(result.confirm.action)}? Say yes to confirm.`);
+      play("confirm");
+      showHud();
+      // Hold the conversation open, or answering "yes" would mean saying the
+      // wake word again first - absurd for a question the agent just asked.
+      openConversation(CONFIRM_WINDOW_MS);
+      fileLog("route", "awaiting-confirmation", { action: result.confirm.action });
+      return;
+    }
+
+    if (result.outcome !== "ok") {
+      // Report what did run before the failure, so a half-done chain is visible.
+      const detail = done.length ? `${done.join(", ")} \u2014 then: ${result.detail}` : result.detail;
+      finish(result.outcome, cmd, result.decision, result.action, detail, started,
+             cmd.transcribeMs, routeMs, result.outcome === "cancelled" && !done.length,
+             0, result.outcome === "cancelled" && !done.length ? "leave" : "open");
+      return;
+    }
+    done.push(result.detail);
+  }
+
+  finish("ok", cmd, last?.decision ?? null, last?.action ?? null,
+         done.join(", ") || "Done", started, cmd.transcribeMs, routeMs);
+}
+
+/** Route one command and run it, without touching the HUD or earcons. */
+async function routeOne(text: string, started: number): Promise<Outcome> {
   let decision: RouteDecision;
   let ctx: ActionContext;
   try {
-    ctx = await buildContext(cmd.transcript);
+    ctx = await buildContext(text);
     decision = await route(ctx, { confidenceThreshold: getSettings().confidenceThreshold });
   } catch (err) {
     fileLog("route", "threw", { message: describe(err) });
-    finish("failed", cmd, null, null, describe(err), started, cmd.transcribeMs, 0);
-    return;
+    return { outcome: "failed", action: null, detail: describe(err), decision: null };
   }
 
   fileLog("route", "decision", {
-    transcript: cmd.transcript,
+    transcript: text,
     action: decision.action,
     args: decision.args,
     confidence: Number(decision.confidence.toFixed(3)),
@@ -285,49 +340,67 @@ async function handleCommand(cmd: CommandAudio): Promise<void> {
     reason: decision.reason,
   });
 
-  // Not addressed to the agent — most likely a false wake while the user was
-  // talking to someone else. Say nothing and go back to waiting.
+  // Not addressed to the agent - most likely a false wake while the user was
+  // talking to someone else.
   if (decision.addressed < 0.35) {
-    // A false trigger: say nothing, and neither open nor close a conversation.
-    finish("cancelled", cmd, decision, null, "not addressed to the agent", started, cmd.transcribeMs, decision.ms, true, 0, "leave");
-    return;
+    return { outcome: "cancelled", action: null, detail: "not addressed to the agent", decision };
   }
-
   if (!decision.action) {
-    finish("rejected", cmd, decision, null, decision.reason ?? "No matching command", started, cmd.transcribeMs, decision.ms);
-    return;
+    return { outcome: "rejected", action: null, detail: decision.reason ?? "No matching command", decision };
   }
 
   const missing = missingSlots(decision.action, decision.args);
   if (missing.length > 0) {
-    finish("rejected", cmd, decision, decision.action, `Could not work out the ${missing.join(" and ")}`, started, cmd.transcribeMs, decision.ms);
-    return;
+    return {
+      outcome: "rejected",
+      action: decision.action,
+      detail: `Could not work out the ${missing.join(" and ")}`,
+      decision,
+    };
   }
 
   // Confidence gate. Jev reports calibrated confidence, and a 50-command
   // calibration run put correct answers at a mean of 0.98 and wrong ones at
-  // 0.53 — so this threshold is a real dial, not a guess.
+  // 0.53 - so this threshold is a real dial, not a guess.
   if (decision.confidence < getSettings().confidenceThreshold) {
-    finish("rejected", cmd, decision, decision.action, `Not sure enough — did you mean to ${phrase(decision.action).toLowerCase()}?`, started, cmd.transcribeMs, decision.ms);
-    return;
+    return {
+      outcome: "rejected",
+      action: decision.action,
+      detail: `Not sure enough \u2014 did you mean to ${phrase(decision.action).toLowerCase()}?`,
+      decision,
+    };
   }
 
   // Destructive actions need a spoken yes, gated on BOTH the registry flag and
   // the model's own read of how much damage a misunderstanding would do.
   const dangerous = ACTIONS[decision.action].destructive === true || decision.risk >= 2.5;
   if (dangerous && getSettings().confirmDestructive) {
-    pending = { action: decision.action, args: decision.args, ctx, askedAt: Date.now() };
-    coordinator.setState("confirming", `${phrase(decision.action)}? Say yes to confirm.`);
-    play("confirm");
-    showHud();
-    // Hold the conversation open, or answering "yes" would mean saying the wake
-    // word again first — which is absurd for a question the agent just asked.
-    openConversation(CONFIRM_WINDOW_MS);
-    fileLog("route", "awaiting-confirmation", { action: decision.action });
-    return;
+    return {
+      outcome: "cancelled",
+      action: decision.action,
+      detail: "awaiting confirmation",
+      decision,
+      confirm: { action: decision.action, args: decision.args, ctx },
+    };
   }
 
-  await runAction(decision.action, decision.args, ctx, cmd, decision, started);
+  coordinator.setState("executing", phrase(decision.action));
+  const execStarted = Date.now();
+  try {
+    const result = await execute(decision.action, decision.args, platform(), ctx);
+    const execMs = Date.now() - execStarted;
+    fileLog("execute", "ok", { action: decision.action, args: decision.args, execMs });
+    if (decision.action === "stop_listening") stopListening();
+    return {
+      outcome: "ok",
+      action: decision.action,
+      detail: result.detail ?? phrase(decision.action),
+      decision,
+    };
+  } catch (err) {
+    fileLog("execute", "failed", { action: decision.action, args: decision.args, message: describe(err) });
+    return { outcome: "failed", action: decision.action, detail: describe(err), decision };
+  }
 }
 
 async function resolveConfirmation(cmd: CommandAudio, started: number): Promise<void> {

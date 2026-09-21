@@ -100,6 +100,37 @@ export function afterPhrase(transcript: string, leads: string[]): string | null 
   return null;
 }
 
+/**
+ * Sites people name rather than spell.
+ *
+ * "open YouTube" is a website, not an application — there is no YouTube.app to
+ * find, so without this the command routes to open_app and dies looking for it.
+ */
+const KNOWN_SITES: Record<string, string> = {
+  youtube: "youtube.com",
+  github: "github.com",
+  gmail: "mail.google.com",
+  google: "google.com",
+  "google drive": "drive.google.com",
+  reddit: "reddit.com",
+  wikipedia: "wikipedia.org",
+  twitter: "twitter.com",
+  x: "x.com",
+  amazon: "amazon.com",
+  netflix: "netflix.com",
+  linkedin: "linkedin.com",
+  "stack overflow": "stackoverflow.com",
+  stackoverflow: "stackoverflow.com",
+  facebook: "facebook.com",
+  instagram: "instagram.com",
+  chatgpt: "chatgpt.com",
+  claude: "claude.ai",
+  "hacker news": "news.ycombinator.com",
+  twitch: "twitch.tv",
+  spotify: "open.spotify.com",
+  maps: "maps.google.com",
+};
+
 /** A URL or bare domain mentioned in the transcript. */
 export function extractUrl(transcript: string): string | null {
   const explicit = transcript.match(/\bhttps?:\/\/\S+/i);
@@ -112,11 +143,20 @@ export function extractUrl(transcript: string): string | null {
   const domain = spoken.match(
     /\b([a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/[^\s]*)?)\b/i,
   );
-  if (!domain?.[1]) return null;
-  // Reject things that merely look like a sentence with a full stop.
-  const tld = domain[1].split("/")[0]!.split(".").pop()!;
-  return /^[a-z]{2,}$/i.test(tld) && tld.length <= 6 ? domain[1] : null;
+  if (domain?.[1]) {
+    const tld = domain[1].split("/")[0]!.split(".").pop()!;
+    if (/^[a-z]{2,}$/i.test(tld) && tld.length <= 6) return domain[1];
+  }
+
+  // No address spelled out — check whether they named a site instead. Longest
+  // first so "google drive" wins over "google".
+  const words = spoken.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  for (const name of Object.keys(KNOWN_SITES).sort((a, b) => b.length - a.length)) {
+    if (new RegExp(`\\b${name.replace(/ /g, "\\s+")}\\b`).test(words)) return KNOWN_SITES[name]!;
+  }
+  return null;
 }
+
 
 /**
  * Words that carry no evidence about which command was meant.

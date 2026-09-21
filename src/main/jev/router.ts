@@ -23,6 +23,20 @@ import { describeError, getClient } from "./client.ts";
 
 
 
+/**
+ * People describe things rather than naming them: "open the browser", "quit my
+ * editor". Jev reads criteria literally, so an escape hatch worded "the user did
+ * not name any of these" is TRUE for "the browser" — and the command was
+ * refused at full confidence with no app resolved. Saying explicitly that a
+ * description counts is what fixes it.
+ */
+function slotQuestion(describe: string): string {
+  return `${describe}. The user may describe it rather than name it exactly — "the browser" means their web browser, "my editor" means their code editor. Pick the option that best fits what they meant.`;
+}
+
+const NONE_CRITERION =
+  "Nothing in this list could plausibly be what the user meant, even loosely.";
+
 const RISK_LEVELS = [
   "Harmless and instantly reversible, like changing the volume or opening an app.",
   "Changes something the user would notice but can easily undo.",
@@ -34,8 +48,18 @@ const RISK_LEVELS = [
 async function slotCandidates(slot: EnumSlot, ctx: ActionContext): Promise<string[]> {
   const all = await slot.candidates(ctx);
   const narrowed = slot.shortlist ? slot.shortlist(ctx, all) : all;
-  // Jev caps a Choice at 255 options, and a padded state measurably degrades it.
-  return (narrowed.length ? narrowed : all).slice(0, 40);
+  if (narrowed.length) return narrowed.slice(0, 24);
+
+  // Nothing matched by name — which is exactly the "open the browser" case. Send
+  // a real list rather than the alphabetically-first 40, or the answer can only
+  // be "none": running apps first, since they are the likeliest referent.
+  const running = new Set(ctx.runningApps);
+  const ordered = [...all].sort((a, b) => {
+    const ra = running.has(a) ? 0 : 1;
+    const rb = running.has(b) ? 0 : 1;
+    return ra - rb || a.localeCompare(b);
+  });
+  return ordered.slice(0, 60);
 }
 
 
@@ -54,7 +78,12 @@ export async function route(
   }
 
   const started = Date.now();
-  const likely = rankActions(ctx.transcript);
+  // Speculate for the single most likely action only.
+  //
+  // Extra questions are nearly free in Jev's own terms, but an enum slot carries
+  // its whole candidate list, and three of those tripled the round trip: 410 ms
+  // in calibration against 1.2-3.4 s in use.
+  const likely = rankActions(ctx.transcript, 1);
 
   // Speculative fan-out: resolve enum slots for the few plausible actions in the
   // SAME request. Jev evaluates all questions in parallel, so extra questions
@@ -69,9 +98,9 @@ export async function route(
       if (candidates.length === 0) continue;
       if (candidates.length === 1) continue; // nothing to decide
       const qid = `slot_${action}_${slotName}`;
-      speculative[qid] = choice(slot.describe, {
+      speculative[qid] = choice(slotQuestion(slot.describe), {
         ...Object.fromEntries(candidates.map((c) => [c, null])),
-        [NONE]: "The user did not name any of these.",
+        [NONE]: NONE_CRITERION,
       });
       speculativeMap.push({ question: qid, action, slot: slotName });
     }
@@ -177,9 +206,9 @@ async function resolveMissingSlots(
     if (!slot || slot.kind !== "enum") continue;
     const candidates = await slotCandidates(slot as EnumSlot, ctx);
     if (candidates.length === 0) continue;
-    questions[name] = choice(slot.describe, {
+    questions[name] = choice(slotQuestion(slot.describe), {
       ...Object.fromEntries(candidates.map((c) => [c, null])),
-      [NONE]: "The user did not name any of these.",
+      [NONE]: NONE_CRITERION,
     });
     wanted.push(name);
   }

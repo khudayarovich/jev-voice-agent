@@ -103,3 +103,26 @@ test("shortlisting respects its limit so the model's state stays small", () => {
   const apps = Array.from({ length: 50 }, (_, i) => `App ${i}`);
   assert.ok(shortlistBy("open app 1", apps, 4).length <= 4);
 });
+
+test("recognises sites people name rather than spell", () => {
+  // "open YouTube" is a website, not an app — without this it routes to
+  // open_app and dies looking for a YouTube.app that does not exist.
+  assert.equal(extractUrl("open youtube"), "youtube.com");
+  assert.equal(extractUrl("open github"), "github.com");
+  assert.equal(extractUrl("go to hacker news"), "news.ycombinator.com");
+});
+
+test("prefers the longer site name", () => {
+  assert.equal(extractUrl("open google drive"), "drive.google.com");
+  assert.equal(extractUrl("open google"), "google.com");
+});
+
+test("a spelled-out address still wins over a name", () => {
+  assert.equal(extractUrl("go to youtube.com/feed"), "youtube.com/feed");
+  assert.equal(extractUrl("open https://example.com"), "https://example.com");
+});
+
+test("does not invent a site from ordinary words", () => {
+  assert.equal(extractUrl("open safari"), null);
+  assert.equal(extractUrl("take a screenshot"), null);
+});

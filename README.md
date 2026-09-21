@@ -87,6 +87,18 @@ The focused app measurably helps. "copy that" is ambiguous on its own
 *addressed* score falls to 0.29 — the model correctly suspects you may be
 talking to a person, and the agent stays quiet.
 
+## Things it handles that are easy to get wrong
+
+- **Described, not named.** "open the browser" resolves to your actual browser.
+  Jev reads criteria literally, so the slot question says outright that a
+  description counts — without that it answered "the user named none of these"
+  and refused the command at full confidence.
+- **Chained requests.** "open Firefox and open YouTube" runs both. Splitting is
+  refused when the conjunction belongs to a payload, so "type hello and goodbye"
+  stays one command.
+- **Sites vs apps.** "open YouTube" is a website; there is no YouTube.app to
+  find. Well-known sites route to the browser instead.
+
 ## Commands
 
 70 at the moment: 60 built in, plus every Shortcut you have written — those are

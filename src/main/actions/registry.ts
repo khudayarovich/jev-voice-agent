@@ -42,8 +42,9 @@ const runningAppSlot = (describe: string) =>
 export const ACTIONS = {
   // --- applications ------------------------------------------------------
   open_app: action({
-    describe: "Launch an application, or bring it to the front if already running.",
-    examples: ["open safari", "launch terminal", "switch to slack", "go to mail"],
+    describe:
+      "Launch an application installed on this Mac, or bring it to the front if it is already running. For a website, use the open-website command instead.",
+    examples: ["open safari", "launch terminal", "switch to slack", "open finder"],
     slots: { app: appSlot("Which application to open") },
     async run({ app }, os) {
       await os.openApp(app);
@@ -613,8 +614,9 @@ export const ACTIONS = {
 
   // --- web ---------------------------------------------------------------
   open_url: action({
-    describe: "Open a specific website the user named by address.",
-    examples: ["go to github dot com", "open example.com", "visit apple.com"],
+    describe:
+      "Open a website in the browser. Use for a spelled-out address AND for a well-known site named directly, such as YouTube, GitHub, Gmail or Reddit — those are websites, not installed applications.",
+    examples: ["go to github dot com", "open example.com", "open youtube", "visit reddit"],
     slots: { url: textSlot("The web address", extractUrl) },
     async run({ url }, os) {
       await os.openUrl(url);
