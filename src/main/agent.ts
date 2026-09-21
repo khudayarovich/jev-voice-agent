@@ -12,6 +12,7 @@ import { platform } from "./platform/index.ts";
 import { Vad } from "./audio/vad.ts";
 import { WakeWord } from "./audio/wake.ts";
 import { WhisperEngine } from "./audio/whisper.ts";
+import { buildVocabularyPrompt } from "./audio/vocabulary.ts";
 import { coordinator } from "./coordinator.ts";
 import { isSelfAudioActive, play } from "./earcons.ts";
 import { log as fileLog } from "./log.ts";
@@ -47,7 +48,13 @@ async function doStart(): Promise<void> {
   coordinator.setState("thinking", "Starting speech engine…");
 
   try {
-    if (!speech) speech = new WhisperEngine();
+    // A model change means a different server process, so rebuild rather than
+    // reuse.
+    if (speech && speech.model !== settings.sttModel) {
+      speech.stop();
+      speech = null;
+    }
+    if (!speech) speech = new WhisperEngine(settings.sttModel);
     // This also forces the one-time Metal shader compile, which takes ~17 s on a
     // cold machine. Far better to pay it here than on the first spoken command.
     await speech.start();
@@ -70,6 +77,12 @@ async function doStart(): Promise<void> {
   );
   wirePipeline(pipeline);
   pipeline.arm();
+
+  // Tell the recogniser what vocabulary to expect. This is the single most
+  // effective accuracy lever available: measured over a set of spoken commands
+  // it more than halved word error rate, because nearly every failure is a
+  // proper noun — an app name the model had no reason to consider.
+  void primeVocabulary();
 
   createCapture();
   // The capture window may still be loading; retry until it takes the message.
@@ -101,7 +114,31 @@ export function shutdown(): void {
 
 export function applySettings(next: AppSettings): void {
   pipeline?.updateSettings(next);
+  if (speech && speech.model !== next.sttModel && pipeline?.listening) {
+    // Swap the speech model without making the user toggle listening off and on.
+    fileLog("agent", "model-change", { from: speech.model, to: next.sttModel });
+    stopListening();
+    void startListening();
+    return;
+  }
   if (next.hotkey !== registeredHotkey && pipeline?.listening) registerHotkey(next.hotkey);
+}
+
+/** Seed the recogniser with the apps actually installed on this Mac. */
+async function primeVocabulary(): Promise<void> {
+  if (!speech?.setVocabulary) return;
+  try {
+    const os = platform();
+    const [installed, running] = await Promise.all([
+      os.listApps().catch(() => []),
+      os.runningApps().catch(() => [] as string[]),
+    ]);
+    const prompt = buildVocabularyPrompt(installed, running);
+    speech.setVocabulary(prompt);
+    fileLog("agent", "vocabulary", { apps: installed.length, chars: prompt.length });
+  } catch (err) {
+    fileLog("agent", "vocabulary-failed", { message: describe(err) });
+  }
 }
 
 async function sendCaptureStart(deviceId: string): Promise<void> {

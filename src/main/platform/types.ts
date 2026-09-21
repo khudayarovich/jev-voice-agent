@@ -11,6 +11,8 @@ export interface AppInfo {
   /** Bundle id on macOS; executable name on Windows. */
   id?: string;
   path?: string;
+  /** Epoch ms of last launch, when the OS knows. Used to rank likely referents. */
+  lastUsed?: number;
 }
 
 export interface FocusContext {

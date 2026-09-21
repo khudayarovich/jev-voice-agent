@@ -1,5 +1,7 @@
 import type {
   ActionSummary,
+  ModelDownloadProgress,
+  SttModelInfo,
   AgentState,
   AppSettings,
   CommandLogEntry,
@@ -150,6 +152,87 @@ async function testKey(): Promise<void> {
 }
 
 $("testKey").addEventListener("click", () => void testKey());
+
+// ---------------------------------------------------------------------------
+// Speech models
+// ---------------------------------------------------------------------------
+
+let sttModels: SttModelInfo[] = [];
+
+function modelRow(m: SttModelInfo, selected: string): HTMLElement {
+  const el = document.createElement("label");
+  el.className = `model${m.id === selected ? " active" : ""}`;
+  el.dataset.model = m.id;
+
+  const radio = document.createElement("input");
+  radio.type = "radio";
+  radio.name = "sttModel";
+  radio.checked = m.id === selected;
+
+  const name = document.createElement("span");
+  name.className = "model-name";
+  name.textContent = m.label;
+
+  const meta = document.createElement("span");
+  meta.className = "model-meta";
+  meta.textContent = m.installed
+    ? `${m.size} · ~${m.latencyMs} ms`
+    : `${m.size} · not downloaded`;
+
+  const note = document.createElement("span");
+  note.className = "model-note";
+  note.textContent = m.note;
+
+  const bar = document.createElement("span");
+  bar.className = "model-bar";
+  bar.hidden = true;
+  bar.append(document.createElement("i"));
+
+  el.append(radio, name, meta, note, bar);
+
+  radio.addEventListener("change", async () => {
+    if (!m.installed) {
+      // Download first, then switch — selecting a model that is not there yet
+      // would just fail inside the engine.
+      meta.textContent = "starting download…";
+      bar.hidden = false;
+      await window.jev.stt.download(m.id);
+      return;
+    }
+    await save({ sttModel: m.id });
+    await renderModels();
+  });
+
+  return el;
+}
+
+async function renderModels(): Promise<void> {
+  sttModels = await window.jev.stt.models();
+  const selected = (await window.jev.settings.get()).sttModel;
+  $("sttModels").replaceChildren(...sttModels.map((m) => modelRow(m, selected)));
+}
+
+window.jev.stt.onProgress(async (p: ModelDownloadProgress) => {
+  const row = document.querySelector<HTMLElement>(`.model[data-model="${p.id}"]`);
+  if (!row) return;
+  const meta = row.querySelector(".model-meta") as HTMLElement;
+  const fill = row.querySelector(".model-bar > i") as HTMLElement;
+
+  if (p.error) {
+    meta.textContent = `download failed — ${p.error}`;
+    (row.querySelector(".model-bar") as HTMLElement).hidden = true;
+    return;
+  }
+  if (p.done) {
+    // Downloaded, so make it the active model — that is what the click meant.
+    await save({ sttModel: p.id });
+    await renderModels();
+    return;
+  }
+  const pctDone = p.totalBytes ? (p.receivedBytes / p.totalBytes) * 100 : 0;
+  fill.style.width = `${pctDone}%`;
+  meta.textContent = `downloading ${Math.round(pctDone)}%`;
+});
 
 // ---------------------------------------------------------------------------
 // Permissions
@@ -431,6 +514,7 @@ async function boot(): Promise<void> {
   const { state } = await window.jev.agent.state();
   paintState(state);
   await renderPermissions();
+  await renderModels();
   void testKey();
 }
 

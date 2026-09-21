@@ -186,3 +186,18 @@ output { color: var(--dim); font-weight: 400; font-variant-numeric: tabular-nums
 .tag.destructive { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
 .tag.slot { background: rgba(127,127,127,0.18); color: var(--dim); text-transform: none; font-family: ui-monospace, Menlo, monospace; }
 .tag.dynamic { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+
+/* ── speech models ───────────────────────────────────────── */
+.models { display: flex; flex-direction: column; gap: 6px; }
+.model {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px;
+  align-items: center;
+  border: 0.5px solid var(--line); border-radius: 8px; padding: 9px 11px;
+}
+.model.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.model input { margin: 0; }
+.model-name { font-weight: 550; }
+.model-meta { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.model-note { grid-column: 2 / -1; color: var(--dim); font-size: 11.5px; }
+.model-bar { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: rgba(127,127,127,0.2); overflow: hidden; }
+.model-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 200ms linear; }

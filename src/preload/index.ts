@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "../shared/ipc.ts";
 import type {
   ActionSummary,
+  ModelDownloadProgress,
+  SttModelInfo,
   AgentState,
   ApiKeyStatus,
   AppSettings,
@@ -39,6 +41,15 @@ const api = {
       ipcRenderer.invoke(IPC.openPermissionSettings, id),
     test: (id: PermissionId): Promise<{ state: PermissionState; detail: string }> =>
       ipcRenderer.invoke(IPC.selfTestPermission, id),
+  },
+  stt: {
+    models: (): Promise<SttModelInfo[]> => ipcRenderer.invoke(IPC.listSttModels),
+    download: (id: string): Promise<void> => ipcRenderer.invoke(IPC.downloadSttModel, id),
+    onProgress: (fn: (p: ModelDownloadProgress) => void) => {
+      const h = (_e: unknown, p: ModelDownloadProgress) => fn(p);
+      ipcRenderer.on(IPC.sttDownloadProgress, h);
+      return () => ipcRenderer.removeListener(IPC.sttDownloadProgress, h);
+    },
   },
   actions: {
     list: (): Promise<ActionSummary[]> => ipcRenderer.invoke(IPC.listActions),

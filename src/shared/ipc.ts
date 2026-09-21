@@ -16,6 +16,9 @@ export const IPC = {
   getDiagnostics: "diag:get",
   getEarcons: "earcon:load",
   listActions: "actions:list",
+  listSttModels: "stt:list",
+  downloadSttModel: "stt:download",
+  sttDownloadProgress: "stt:progress",
 
   // capture renderer -> main (one-way, high frequency)
   audioFrames: "audio:frames",

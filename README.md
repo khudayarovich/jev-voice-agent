@@ -87,6 +87,30 @@ The focused app measurably helps. "copy that" is ambiguous on its own
 *addressed* score falls to 0.29 — the model correctly suspects you may be
 talking to a person, and the agent stays quiet.
 
+## Speech recognition
+
+Runs on this Mac via whisper.cpp, selectable in Settings. Measured here over
+spoken commands naming real installed applications — the case that actually
+fails, since nearly every recognition error is a proper noun:
+
+| model | no prompt | with vocabulary prompt | latency |
+|---|---|---|---|
+| base.en | 38.9% WER | 13.9% | 54 ms |
+| **small.en** (default) | 22.2% WER | **5.6%** | 145 ms |
+| large-v3-turbo | 22.2% WER | 23.6% | 604 ms |
+
+Two results worth keeping in mind. **The vocabulary prompt matters more than the
+model** — it more than halved the error rate for every English model. And
+**bigger is not better**: `large-v3-turbo` is multilingual while the `.en` models
+are English-specialised, so on English application names the small English model
+beats it outright at a quarter of the latency. It stays available because
+multilingual training is what helps with a strong accent.
+
+The prompt is built from *your* apps, ranked by how recently you launched each
+one (via Spotlight), because whisper's prompt only fits about sixty names and
+cutting the list alphabetically would drop Safari, Slack and Terminal while
+keeping every utility beginning with "A".
+
 ## Things it handles that are easy to get wrong
 
 - **Described, not named.** "open the browser" resolves to your actual browser.

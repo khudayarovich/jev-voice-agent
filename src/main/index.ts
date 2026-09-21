@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { IPC } from "../shared/ipc.ts";
 import type { AppSettings, PermissionId } from "../shared/types.ts";
 import { ACTIONS, ACTION_KEYS } from "./actions/registry.ts";
+import { catalogue, downloadModel } from "./audio/download.ts";
 import { applySettings, getPipeline, shutdown, startListening, stopListening } from "./agent.ts";
 import { platform } from "./platform/index.ts";
 import { coordinator } from "./coordinator.ts";
@@ -159,6 +160,18 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.getLog, () => coordinator.getLog());
+
+  ipcMain.handle(IPC.listSttModels, () =>
+    catalogue().map(({ id, label, size, latencyMs, note, installed }) => ({
+      id, label, size, latencyMs, note, installed,
+    })),
+  );
+
+  ipcMain.handle(IPC.downloadSttModel, async (event, id: string) => {
+    await downloadModel(id, (progress) => {
+      if (!event.sender.isDestroyed()) event.sender.send(IPC.sttDownloadProgress, progress);
+    });
+  });
 
   ipcMain.handle(IPC.listActions, async () => {
     const base = ACTION_KEYS.map((key) => ({

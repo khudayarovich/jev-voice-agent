@@ -105,6 +105,8 @@ export interface AppSettings {
   launchAtLogin: boolean;
   /** Preferred audio input device id, or "" for the system default. */
   inputDeviceId: string;
+  /** Which local speech-to-text model to run. See STT_MODELS. */
+  sttModel: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -125,6 +127,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   listenOnStart: true,
   launchAtLogin: false,
   inputDeviceId: "",
+  sttModel: "small.en",
 };
 
 /** Result of probing the configured Jev credentials. */
@@ -172,4 +175,22 @@ export interface ActionSummary {
   slots: string[];
   /** True for actions discovered from the user's own Shortcuts. */
   dynamic?: boolean;
+}
+
+/** One entry of the speech-to-text model catalogue, for the Settings picker. */
+export interface SttModelInfo {
+  id: string;
+  label: string;
+  size: string;
+  latencyMs: number;
+  note: string;
+  installed: boolean;
+}
+
+export interface ModelDownloadProgress {
+  id: string;
+  receivedBytes: number;
+  totalBytes: number;
+  done: boolean;
+  error?: string;
 }

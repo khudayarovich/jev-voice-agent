@@ -104,8 +104,52 @@ export class MacPlatform implements PlatformAdapter {
       }
     }
     const apps = [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+    await this.attachLastUsed(apps);
     this.appCache = { at: Date.now(), apps };
     return apps;
+  }
+
+  /**
+   * Annotate apps with when they were last launched, via Spotlight.
+   *
+   * This is the ranking signal that makes the speech vocabulary prompt useful.
+   * whisper's prompt is bounded at a couple of hundred tokens, so on a Mac with
+   * a hundred apps the list has to be cut somewhere — and cutting it
+   * alphabetically drops Safari, Slack, Terminal and Xcode while keeping every
+   * utility beginning with "A". Recency is a far better predictor of what the
+   * user is about to say. One `mdls` call covers every app in about 70 ms.
+   */
+  private async attachLastUsed(apps: AppInfo[]): Promise<void> {
+    const paths = apps.map((a) => a.path).filter((p): p is string => Boolean(p));
+    if (paths.length === 0) return;
+    try {
+      const { stdout } = await exec(
+        "/usr/bin/mdls",
+        ["-name", "kMDItemLastUsedDate", "-name", "kMDItemFSName", ...paths],
+        { timeout: 6000, maxBuffer: 8 * 1024 * 1024 },
+      );
+      const byName = new Map<string, number>();
+      let currentName = "";
+      for (const line of stdout.split("\n")) {
+        const nameMatch = line.match(/kMDItemFSName\s*=\s*"(.+)\.app"/);
+        if (nameMatch?.[1]) {
+          currentName = nameMatch[1];
+          continue;
+        }
+        const dateMatch = line.match(/kMDItemLastUsedDate\s*=\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+        if (dateMatch?.[1] && currentName) {
+          const ms = Date.parse(`${dateMatch[1].replace(" ", "T")}Z`);
+          if (Number.isFinite(ms)) byName.set(currentName, ms);
+        }
+      }
+      for (const app of apps) {
+        const ms = byName.get(app.name);
+        if (ms !== undefined) app.lastUsed = ms;
+      }
+    } catch {
+      // Spotlight may be disabled or indexing; ranking simply falls back to
+      // alphabetical, which still works.
+    }
   }
 
   async runningApps(): Promise<string[]> {

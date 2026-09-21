@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { app } from "electron";
+import { DEFAULT_MODEL_ID, modelById } from "./models.ts";
 import { SAMPLE_RATE, encodeWav } from "./wav.ts";
 
 /**
@@ -27,6 +28,14 @@ export interface SpeechEngine {
   stop(): void;
   transcribe(samples: Float32Array): Promise<string>;
   isReady(): boolean;
+  /**
+   * Words the recogniser should expect.
+   *
+   * Worth more than model size: seeding the decoder with the app names actually
+   * installed on this Mac cut word error rate by more than half, because nearly
+   * every failure is a proper noun the model had no reason to consider.
+   */
+  setVocabulary?(prompt: string): void;
 }
 
 function binaryPath(): string {
@@ -68,8 +77,12 @@ function reapStale(): void {
   }
 }
 
-function modelPath(): string {
-  return path.join(app.getAppPath(), "resources", "models", "ggml-base.en.bin");
+export function modelsDir(): string {
+  return path.join(app.getAppPath(), "resources", "models");
+}
+
+function modelPath(modelId: string): string {
+  return path.join(modelsDir(), modelById(modelId).file);
 }
 
 /** Ask the OS for a free port, then hand it to the child. */
@@ -90,6 +103,21 @@ export class WhisperEngine implements SpeechEngine {
   private port = 0;
   private ready = false;
   private starting: Promise<void> | null = null;
+  private vocabulary = "";
+  private modelId: string;
+
+  constructor(modelId: string = DEFAULT_MODEL_ID) {
+    this.modelId = modelId;
+  }
+
+  /** The model this engine was started with. */
+  get model(): string {
+    return this.modelId;
+  }
+
+  setVocabulary(prompt: string): void {
+    this.vocabulary = prompt;
+  }
 
   isReady(): boolean {
     return this.ready;
@@ -106,7 +134,7 @@ export class WhisperEngine implements SpeechEngine {
 
   private async doStart(): Promise<void> {
     const bin = binaryPath();
-    const model = modelPath();
+    const model = modelPath(this.modelId);
     if (!existsSync(bin)) throw new Error(`whisper-server not found at ${bin}. Run scripts/setup-whisper.sh`);
     if (!existsSync(model)) throw new Error(`model not found at ${model}. Run scripts/setup-whisper.sh`);
 
@@ -120,6 +148,10 @@ export class WhisperEngine implements SpeechEngine {
         "--port", String(this.port),
         "-nt",                           // no timestamps: we want plain text
         "-t", "4",
+        // Suppress non-speech tokens: commands never contain [MUSIC] or (sighs),
+        // and letting the decoder consider them only invites hallucination on
+        // the near-silence at the edges of an utterance.
+        "-sns",
         // Commands are short and clean; greedy decoding is both faster and less
         // prone to the hallucinated filler beam search invents on near-silence.
         "-bo", "1", "-bs", "1",
@@ -185,6 +217,8 @@ export class WhisperEngine implements SpeechEngine {
     form.append("file", new Blob([wav], { type: "audio/wav" }), "audio.wav");
     form.append("response_format", "text");
     form.append("temperature", "0.0");
+    // Bias the decoder toward the words a command is actually made of.
+    if (this.vocabulary) form.append("prompt", this.vocabulary);
 
     const res = await fetch(`http://127.0.0.1:${this.port}/inference`, {
       method: "POST",
