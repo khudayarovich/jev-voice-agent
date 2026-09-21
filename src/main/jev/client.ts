@@ -6,8 +6,8 @@ import {
   TypeSafeClient,
   TypeSafeError,
 } from "@typesafe-ai/sdk";
-import type { ApiKeyStatus } from "../../shared/types";
-import { getApiKey, getSettings } from "../settings-store";
+import type { ApiKeyStatus } from "../../shared/types.ts";
+import { getApiKey, getSettings } from "../settings-store.ts";
 
 /**
  * The Jev (TypeSafe AI) client.

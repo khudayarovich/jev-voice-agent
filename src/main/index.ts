@@ -1,19 +1,21 @@
 import { BrowserWindow, app, ipcMain } from "electron";
 import { readFile } from "node:fs/promises";
-import { IPC } from "../shared/ipc";
-import type { AppSettings, PermissionId } from "../shared/types";
-import { coordinator } from "./coordinator";
-import * as jev from "./jev/client";
-import * as permissions from "./permissions";
+import { IPC } from "../shared/ipc.ts";
+import type { AppSettings, PermissionId } from "../shared/types.ts";
+import { applySettings, getPipeline, shutdown, startListening, stopListening } from "./agent.ts";
+import { coordinator } from "./coordinator.ts";
+import { getLogPath, initLog, log } from "./log.ts";
+import * as jev from "./jev/client.ts";
+import * as permissions from "./permissions/index.ts";
 import {
   apiKeySummary,
   getSettings,
   setApiKey,
   updateSettings,
-} from "./settings-store";
-import { createTray, destroyTray, hideDock, refreshTrayMenu, setTrayState } from "./tray";
-import { resource } from "./paths";
-import { createHud, getHud, getSettingsWindow, openSettings } from "./windows";
+} from "./settings-store.ts";
+import { createTray, destroyTray, hideDock, refreshTrayMenu, setTrayState } from "./tray.ts";
+import { resource } from "./paths.ts";
+import { createHud, getHud, getSettingsWindow, openSettings } from "./windows.ts";
 
 // A menu-bar agent must never run twice: two trays, two hotkey registrations,
 // two microphone consumers.
@@ -24,13 +26,38 @@ if (!app.requestSingleInstanceLock()) {
   void main();
 }
 
+/**
+ * A throw in the audio path arrives ~15 times a second, and Electron's default
+ * handler puts up a modal dialog for each one. Catch it, stop the loop so it
+ * cannot repeat, and show the reason in the UI instead.
+ */
+function installCrashGuard(): void {
+  process.on("uncaughtException", (err) => {
+    log("app", "uncaughtException", { message: err.message, stack: err.stack });
+    try {
+      stopListening();
+    } catch {
+      // Nothing useful left to do.
+    }
+    coordinator.setState("error", err.message);
+  });
+  process.on("unhandledRejection", (reason) => {
+    log("app", "unhandledRejection", { reason: String(reason) });
+  });
+}
+
 async function main(): Promise<void> {
   await app.whenReady();
+  initLog();
+  installCrashGuard();
   hideDock();
 
   createTray({
     isListening: () => coordinator.isListening(),
-    onToggleListening: () => coordinator.setListening(!coordinator.isListening()),
+    onToggleListening: () => {
+      if (coordinator.isListening()) stopListening();
+      else void startListening();
+    },
     onOpenSettings: () => openSettings(),
     onQuit: () => {
       app.quit();
@@ -73,6 +100,7 @@ function registerIpc(): void {
     const next = updateSettings(patch);
     // Base URL or model changes must rebuild the Jev client.
     jev.invalidate();
+    applySettings(next);
     if (typeof patch.launchAtLogin === "boolean") {
       app.setLoginItemSettings({ openAtLogin: patch.launchAtLogin });
     }
@@ -100,8 +128,22 @@ function registerIpc(): void {
     listening: coordinator.isListening(),
   }));
 
-  ipcMain.handle(IPC.setListening, (_e, on: boolean) => {
-    coordinator.setListening(Boolean(on));
+  ipcMain.handle(IPC.setListening, async (_e, on: boolean) => {
+    if (on) await startListening();
+    else stopListening();
+  });
+
+  // One-way, high frequency: ~15 blocks a second for as long as the app listens.
+  ipcMain.on(IPC.audioFrames, (_e, pcm: Int16Array, level: number) => {
+    getPipeline()?.acceptFrames(pcm, level);
+  });
+
+  ipcMain.on(IPC.audioStatus, (_e, status: { running: boolean; error?: string; sampleRate?: number }) => {
+    log("capture", "status", { ...status });
+    if (status.error) {
+      coordinator.setState("error", `Microphone unavailable: ${status.error}`);
+      coordinator.setListening(false);
+    }
   });
 
   ipcMain.handle(IPC.getLog, () => coordinator.getLog());
@@ -134,6 +176,7 @@ function registerIpc(): void {
     // grants survive rebuilds during development.
     bundleId: app.isPackaged ? "ai.jev.voiceagent" : "com.github.Electron",
     userData: app.getPath("userData"),
+    logPath: getLogPath(),
   }));
 }
 
@@ -143,6 +186,7 @@ function registerIpc(): void {
 app.on("window-all-closed", () => {});
 
 app.on("before-quit", () => {
+  shutdown();
   destroyTray();
 });
 

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { AgentState, CommandLogEntry, HudModel } from "../shared/types";
+import type { AgentState, CommandLogEntry, HudModel } from "../shared/types.ts";
 
 /**
  * The state machine every other module reports into.

@@ -1,7 +1,7 @@
 import { app, safeStorage } from "electron";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_SETTINGS, type AppSettings } from "../shared/types";
+import { DEFAULT_SETTINGS, type AppSettings } from "../shared/types.ts";
 
 /**
  * Persistent settings.

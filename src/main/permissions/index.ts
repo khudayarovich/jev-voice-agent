@@ -1,6 +1,6 @@
 import { shell, systemPreferences } from "electron";
-import type { PermissionId, PermissionInfo, PermissionState } from "../../shared/types";
-import { AE_ERRORS, runAppleScript } from "../platform/macos/osascript";
+import type { PermissionId, PermissionInfo, PermissionState } from "../../shared/types.ts";
+import { AE_ERRORS, runAppleScript } from "../platform/macos/osascript.ts";
 
 /**
  * macOS TCC handling.

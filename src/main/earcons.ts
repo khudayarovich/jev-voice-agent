@@ -1,6 +1,6 @@
-import { IPC } from "../shared/ipc";
-import { getHud } from "./windows";
-import { getSettings } from "./settings-store";
+import { IPC } from "../shared/ipc.ts";
+import { getHud } from "./windows.ts";
+import { getSettings } from "./settings-store.ts";
 
 export type EarconName = "wake" | "endpoint" | "success" | "error" | "confirm" | "cancel";
 

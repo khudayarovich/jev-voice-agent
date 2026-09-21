@@ -1,4 +1,4 @@
-import type { JevApi } from "../preload/index";
+import type { JevApi } from "../preload/index.ts";
 
 declare global {
   interface Window {

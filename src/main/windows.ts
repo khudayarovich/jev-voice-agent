@@ -1,5 +1,5 @@
 import { BrowserWindow, screen } from "electron";
-import { preloadFile, rendererFile } from "./paths";
+import { preloadFile, rendererFile } from "./paths.ts";
 
 /**
  * Window construction.

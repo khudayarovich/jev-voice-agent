@@ -15,16 +15,18 @@
     "dev": "node scripts/build.mjs --watch",
     "start": "npm run build && electron .",
     "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "tail": "tail -f \"$HOME/Library/Application Support/jev-voice-agent/jev.log\""
   },
   "dependencies": {
-    "@typesafe-ai/sdk": "0.6.0"
+    "@typesafe-ai/sdk": "0.6.0",
+    "sherpa-onnx-node": "^1.13.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "esbuild": "^0.25.0",
     "electron": "^44.4.3",
     "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.0",
     "typescript": "^5.7.2"
   },
   "build": {

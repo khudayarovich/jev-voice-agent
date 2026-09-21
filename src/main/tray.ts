@@ -1,6 +1,6 @@
 import { Menu, Tray, app, nativeImage } from "electron";
-import type { AgentState } from "../shared/types";
-import { resource } from "./paths";
+import type { AgentState } from "../shared/types.ts";
+import { resource } from "./paths.ts";
 
 /**
  * The menu-bar indicator.

@@ -5,7 +5,7 @@ import type {
   PermissionId,
   PermissionInfo,
   PermissionState,
-} from "../../shared/types";
+} from "../../shared/types.ts";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 

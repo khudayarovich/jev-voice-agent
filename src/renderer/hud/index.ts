@@ -1,4 +1,4 @@
-import type { AgentState, HudModel } from "../../shared/types";
+import type { AgentState, HudModel } from "../../shared/types.ts";
 
 /**
  * The transcript overlay, and the owner of the app's audio output.

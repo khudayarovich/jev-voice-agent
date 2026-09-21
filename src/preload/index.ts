@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { IPC } from "../shared/ipc";
+import { IPC } from "../shared/ipc.ts";
 import type {
   AgentState,
   ApiKeyStatus,
@@ -9,7 +9,7 @@ import type {
   PermissionId,
   PermissionInfo,
   PermissionState,
-} from "../shared/types";
+} from "../shared/types.ts";
 
 /**
  * The only bridge between renderers and the main process.
@@ -48,6 +48,31 @@ const api = {
   },
   audio: {
     cues: (): Promise<Record<string, Uint8Array>> => ipcRenderer.invoke(IPC.getEarcons),
+  },
+  capture: {
+    /**
+     * Push one block of 16 kHz mono PCM to main.
+     *
+     * `send`, not `invoke`: this fires ~15x a second forever, and a promise per
+     * block would allocate for no reason. At 16 kHz int16 the whole stream is
+     * about 32 KB/s, which is nothing.
+     */
+    push: (pcm: Int16Array, level: number): void => {
+      ipcRenderer.send(IPC.audioFrames, pcm, level);
+    },
+    status: (status: { running: boolean; error?: string; sampleRate?: number }): void => {
+      ipcRenderer.send(IPC.audioStatus, status);
+    },
+    onStart: (fn: (deviceId: string) => void) => {
+      const h = (_e: unknown, id: string) => fn(id);
+      ipcRenderer.on(IPC.captureStart, h);
+      return () => ipcRenderer.removeListener(IPC.captureStart, h);
+    },
+    onStop: (fn: () => void) => {
+      const h = () => fn();
+      ipcRenderer.on(IPC.captureStop, h);
+      return () => ipcRenderer.removeListener(IPC.captureStop, h);
+    },
   },
   on: {
     state: (fn: (s: AgentState) => void) => {

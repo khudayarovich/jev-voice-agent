@@ -16,6 +16,14 @@ export const IPC = {
   getDiagnostics: "diag:get",
   getEarcons: "earcon:load",
 
+  // capture renderer -> main (one-way, high frequency)
+  audioFrames: "audio:frames",
+  audioStatus: "audio:status",
+
+  // main -> capture renderer
+  captureStart: "capture:start",
+  captureStop: "capture:stop",
+
   // main -> renderer (send)
   agentStateChanged: "agent:stateChanged",
   hudUpdate: "hud:update",
