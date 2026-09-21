@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "../shared/ipc.ts";
 import type {
+  ActionSummary,
   AgentState,
   ApiKeyStatus,
   AppSettings,
@@ -38,6 +39,9 @@ const api = {
       ipcRenderer.invoke(IPC.openPermissionSettings, id),
     test: (id: PermissionId): Promise<{ state: PermissionState; detail: string }> =>
       ipcRenderer.invoke(IPC.selfTestPermission, id),
+  },
+  actions: {
+    list: (): Promise<ActionSummary[]> => ipcRenderer.invoke(IPC.listActions),
   },
   agent: {
     state: (): Promise<{ state: AgentState; listening: boolean }> =>

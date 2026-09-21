@@ -17,6 +17,7 @@
     <button class="nav" data-tab="connection" aria-current="true">Connection</button>
     <button class="nav" data-tab="permissions">Permissions</button>
     <button class="nav" data-tab="voice">Voice</button>
+    <button class="nav" data-tab="commands">Commands</button>
     <button class="nav" data-tab="activity">Activity</button>
     <div class="nav-spacer"></div>
     <label class="listen-toggle">
@@ -165,6 +166,18 @@
           <span><b>Launch at login</b><small>Start quietly in the menu bar.</small></span>
         </label>
       </div>
+    </section>
+
+    <!-- ── Commands ───────────────────────────────────────────── -->
+    <section class="tab" data-tab="commands" hidden>
+      <h1>Commands</h1>
+      <p class="lede">
+        Everything the agent can do. Jev picks from exactly this list — it can never
+        invent a command, and anything not here simply will not run.
+      </p>
+      <input type="text" id="commandFilter" placeholder="Filter commands…" spellcheck="false" />
+      <p class="hint" id="commandCount"></p>
+      <div id="commandList" class="commands"></div>
     </section>
 
     <!-- ── Activity ───────────────────────────────────────────── -->

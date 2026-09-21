@@ -34,11 +34,29 @@ That is both why it is fast (70–500 ms, ~0.003¢ per command) and why it is sa
 ## Status
 
 - [x] **Phase 1** — skeleton, tray, settings, permissions, earcons
-- [ ] **Phase 2** — audio capture → transcript
-- [ ] **Phase 3** — wake word
-- [ ] **Phase 4** — Jev routing + executor
-- [ ] **Phase 5** — full registry, native helper
+- [x] **Phase 2** — audio capture → transcript (~65 ms on an M4 Pro)
+- [x] **Phase 3** — wake word, VAD endpointing, auto-gain
+- [x] **Phase 4** — Jev routing, typed executor, confirmations
+- [ ] **Phase 5** — wider registry, native helper for hold-to-talk
 - [ ] **Phase 6** — Apple SpeechAnalyzer engine, notarization
+
+**To use it:** open Settings → Connection and paste your TypeSafe API key, then
+turn on Listening. Without a key it falls back to the local matcher, which
+handles the common commands but is much blunter.
+
+## Measured on an M4 Pro
+
+| Stage | Time |
+|---|---|
+| Transcription (3 s command, base.en + Metal) | ~65 ms |
+| Jev routing | 70–500 ms (one round trip, all questions in parallel) |
+| Cost per command | ~0.003 ¢ |
+
+## Commands
+
+70 at the moment: 60 built in, plus every Shortcut you have written — those are
+discovered at runtime and become voice-callable with no code change. See
+Settings → Commands.
 
 ## Development
 

@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": []
+  },
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/preload/**/*.ts"
+  ]
+}

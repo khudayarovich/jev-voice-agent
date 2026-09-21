@@ -164,3 +164,24 @@ output { color: var(--dim); font-weight: 400; font-variant-numeric: tabular-nums
 .entry .did { color: var(--dim); font-size: 11.5px; grid-column: 1 / -1; }
 .entry.failed .said { color: var(--bad); }
 .empty { color: var(--dim); text-align: center; padding: 28px 0; }
+
+/* ── commands ────────────────────────────────────────────── */
+.commands { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.cmd {
+  background: var(--card); border: 0.5px solid var(--line);
+  border-radius: 8px; padding: 9px 12px;
+}
+.cmd-head { display: flex; align-items: baseline; gap: 8px; }
+.cmd-key {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
+  font-weight: 600;
+}
+.cmd-desc { color: var(--dim); font-size: 11.5px; margin: 4px 0 0; }
+.cmd-ex { color: var(--dim); font-size: 11.5px; margin: 5px 0 0; font-style: italic; opacity: 0.85; }
+.tag {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  padding: 1px 6px; border-radius: 999px; text-transform: uppercase;
+}
+.tag.destructive { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+.tag.slot { background: rgba(127,127,127,0.18); color: var(--dim); text-transform: none; font-family: ui-monospace, Menlo, monospace; }
+.tag.dynamic { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }

@@ -1,4 +1,5 @@
 import type {
+  ActionSummary,
   AgentState,
   AppSettings,
   CommandLogEntry,
@@ -23,6 +24,7 @@ for (const btn of navs) {
     for (const t of tabs) t.hidden = t.dataset.tab !== name;
     if (name === "permissions") void renderPermissions();
     if (name === "activity") void renderLog();
+    if (name === "commands") void renderCommands();
   });
 }
 
@@ -314,6 +316,80 @@ async function renderLog(): Promise<void> {
 }
 
 window.jev.on.log(() => void renderLog());
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+let allActions: ActionSummary[] = [];
+
+function commandCard(a: ActionSummary): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "cmd";
+
+  const head = document.createElement("div");
+  head.className = "cmd-head";
+  const key = document.createElement("span");
+  key.className = "cmd-key";
+  key.textContent = a.key;
+  head.append(key);
+
+  for (const slot of a.slots) {
+    const t = document.createElement("span");
+    t.className = "tag slot";
+    t.textContent = slot;
+    head.append(t);
+  }
+  if (a.destructive) {
+    const t = document.createElement("span");
+    t.className = "tag destructive";
+    t.textContent = "asks first";
+    head.append(t);
+  }
+  if (a.dynamic) {
+    const t = document.createElement("span");
+    t.className = "tag dynamic";
+    t.textContent = "your shortcut";
+    head.append(t);
+  }
+
+  const desc = document.createElement("p");
+  desc.className = "cmd-desc";
+  desc.textContent = a.describe;
+
+  const ex = document.createElement("p");
+  ex.className = "cmd-ex";
+  ex.textContent = a.examples.map((e) => `“${e}”`).join("   ");
+
+  el.append(head, desc, ex);
+  return el;
+}
+
+function paintCommands(filter: string): void {
+  const f = filter.trim().toLowerCase();
+  const shown = f
+    ? allActions.filter(
+        (a) =>
+          a.key.toLowerCase().includes(f) ||
+          a.describe.toLowerCase().includes(f) ||
+          a.examples.some((e) => e.toLowerCase().includes(f)),
+      )
+    : allActions;
+  $("commandList").replaceChildren(...shown.map(commandCard));
+  const dynamic = allActions.filter((a) => a.dynamic).length;
+  $("commandCount").textContent =
+    `${shown.length} of ${allActions.length} commands` +
+    (dynamic ? ` · ${dynamic} from your own Shortcuts` : "");
+}
+
+async function renderCommands(): Promise<void> {
+  if (allActions.length === 0) allActions = await window.jev.actions.list();
+  paintCommands($<HTMLInputElement>("commandFilter").value);
+}
+
+$<HTMLInputElement>("commandFilter").addEventListener("input", (e) => {
+  paintCommands((e.target as HTMLInputElement).value);
+});
 
 // ---------------------------------------------------------------------------
 // Agent state

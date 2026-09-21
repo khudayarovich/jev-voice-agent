@@ -149,3 +149,14 @@ export interface CommandLogEntry {
   timings: StageTimings;
   inputTokens?: number;
 }
+
+/** One entry of the action registry, for the Commands pane. */
+export interface ActionSummary {
+  key: string;
+  describe: string;
+  examples: string[];
+  destructive: boolean;
+  slots: string[];
+  /** True for actions discovered from the user's own Shortcuts. */
+  dynamic?: boolean;
+}

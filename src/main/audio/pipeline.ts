@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { AppSettings } from "../../shared/types.ts";
+import { AutoGain, normalizeUtterance } from "./gain.ts";
 import { RingBuffer } from "./ring-buffer.ts";
 import { SAMPLE_RATE, int16ToFloat32 } from "./wav.ts";
 import type { SpeechEngine } from "./whisper.ts";
@@ -109,6 +110,14 @@ export declare interface AudioPipeline {
 export class AudioPipeline extends EventEmitter {
   private mode: Mode = "off";
   private readonly ring = new RingBuffer(SAMPLE_RATE * PRE_ROLL_SECONDS);
+  /**
+   * Gain for the keyword spotter only.
+   *
+   * The VAD gets the untouched signal — it is probabilistic and behaves better
+   * on natural levels, and the whole point of the two-factor rule is that the
+   * two detectors are looking at the audio independently.
+   */
+  private readonly wakeGain = new AutoGain();
   private readonly vad: VadLike;
   private wake: WakeLike | null = null;
 
@@ -189,6 +198,7 @@ export class AudioPipeline extends EventEmitter {
     // drop frames while one is playing, plus a tail for room reverb.
     if (this.deps.isSelfAudioActive()) {
       this.wake?.suppress();
+      this.wakeGain.reset();
       return;
     }
 
@@ -205,7 +215,9 @@ export class AudioPipeline extends EventEmitter {
 
   private detectWake(samples: Float32Array, speaking: boolean): void {
     if (!this.wake) return;
-    const hit = this.wake.accept(samples);
+    // Gained, because the spotter is strongly level-dependent: the same phrase
+    // at a normal speaking level is missed at every threshold without this.
+    const hit = this.wake.accept(this.wakeGain.process(samples));
     if (!hit) return;
     // Two-factor: the keyword score fired AND the VAD agrees someone is
     // actually speaking. The spotter alone is the noisier of the two signals.
@@ -292,7 +304,9 @@ export class AudioPipeline extends EventEmitter {
 
     const started = Date.now();
     try {
-      const raw = await this.deps.speech.transcribe(audio);
+      // Normalise the whole utterance at once. Unlike the streaming gain this
+      // can see the true peak, so it needs no smoothing and cannot pump.
+      const raw = await this.deps.speech.transcribe(normalizeUtterance(audio));
       const transcribeMs = Date.now() - started;
       const transcript =
         this.trigger === "wake" ? stripWakePhrase(raw, this.settings.wakeWords) : raw;

@@ -10,7 +10,7 @@
     "icons": "node scripts/gen-icons.mjs",
     "earcons": "node scripts/gen-earcons.mjs",
     "assets": "npm run icons && npm run earcons",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.renderer.json",
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --watch",
     "start": "npm run build && electron .",

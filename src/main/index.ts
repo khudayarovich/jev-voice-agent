@@ -2,7 +2,9 @@ import { BrowserWindow, app, ipcMain } from "electron";
 import { readFile } from "node:fs/promises";
 import { IPC } from "../shared/ipc.ts";
 import type { AppSettings, PermissionId } from "../shared/types.ts";
+import { ACTIONS, ACTION_KEYS } from "./actions/registry.ts";
 import { applySettings, getPipeline, shutdown, startListening, stopListening } from "./agent.ts";
+import { platform } from "./platform/index.ts";
 import { coordinator } from "./coordinator.ts";
 import { getLogPath, initLog, log } from "./log.ts";
 import * as jev from "./jev/client.ts";
@@ -147,6 +149,30 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.getLog, () => coordinator.getLog());
+
+  ipcMain.handle(IPC.listActions, async () => {
+    const base = ACTION_KEYS.map((key) => ({
+      key,
+      describe: ACTIONS[key].describe,
+      examples: ACTIONS[key].examples,
+      destructive: ACTIONS[key].destructive === true,
+      slots: Object.keys(ACTIONS[key].slots),
+    }));
+    // The user's own Shortcuts are voice-callable too, so show them here rather
+    // than leaving the command list looking shorter than it is.
+    const automations = await platform().listAutomations().catch(() => [] as string[]);
+    return [
+      ...base,
+      ...automations.map((name) => ({
+        key: `shortcut:${name}`,
+        describe: `Run your "${name}" shortcut.`,
+        examples: [`run ${name.toLowerCase()}`],
+        destructive: false,
+        slots: [],
+        dynamic: true,
+      })),
+    ];
+  });
 
   // The HUD cannot fetch() its own WAV files: a file:// page has a null origin,
   // so Chromium rejects the request as a cross-origin fetch. Handing the bytes
