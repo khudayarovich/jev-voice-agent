@@ -63,6 +63,7 @@ async function doStart(): Promise<void> {
       vad,
       makeWake: (phrases, threshold) => new WakeWord({ phrases, threshold }),
       isSelfAudioActive,
+      trace: (event, data) => fileLog("pipeline", event, data ?? {}),
     },
     settings,
   );
@@ -164,11 +165,48 @@ function wirePipeline(p: AudioPipeline): void {
   p.on("command", (cmd: CommandAudio) => void handleCommand(cmd));
 }
 
+/** A destructive action waiting for the user to say yes. */
+interface Pending {
+  action: ActionKey;
+  args: Record<string, string | number>;
+  ctx: ActionContext;
+  askedAt: number;
+}
+let pending: Pending | null = null;
+
+/** Confirmations go stale — never run something the user agreed to a minute ago. */
+const CONFIRM_WINDOW_MS = 15_000;
+
 /**
- * Phase 2 stops here: show what was heard and log it.
- * Phase 4 replaces this with the Jev router and the executor.
+ * Context handed to the router.
+ *
+ * Everything here is gathered by this app from the OS. Nothing that came from a
+ * web page, the clipboard, or the screen goes anywhere near it — Jev is
+ * documented as steerable by instructions injected into its state.
  */
+async function buildContext(transcript: string): Promise<ActionContext> {
+  const os = platform();
+  // In parallel, and every one of them tolerant of failure: these call out to
+  // System Events, which needs an Automation grant the user may not have given
+  // yet. A missing grant must degrade the context, never block the command.
+  const [focus, running, installed, automations] = await Promise.all([
+    os.focus().catch(() => ({ app: "", windowTitle: "" })),
+    os.runningApps().catch(() => [] as string[]),
+    os.listApps().catch(() => []),
+    os.listAutomations().catch(() => [] as string[]),
+  ]);
+  return {
+    transcript,
+    focusedApp: focus.app,
+    windowTitle: focus.windowTitle ?? "",
+    runningApps: running,
+    installedApps: installed.map((a) => a.name),
+    automations,
+  };
+}
+
 async function handleCommand(cmd: CommandAudio): Promise<void> {
+  const started = Date.now();
   fileLog("pipeline", "command", {
     transcript: cmd.transcript,
     raw: cmd.raw,
@@ -177,22 +215,177 @@ async function handleCommand(cmd: CommandAudio): Promise<void> {
     durationSec: Number(cmd.durationSec.toFixed(2)),
   });
   coordinator.setTranscript(cmd.transcript, false);
-  coordinator.setState("executing", "Heard");
-  play("success");
+
+  // A pending destructive action takes priority over routing anything new.
+  if (pending) {
+    await resolveConfirmation(cmd, started);
+    return;
+  }
+
+  coordinator.setState("thinking", "Working out what you meant…");
+
+  let decision: RouteDecision;
+  let ctx: ActionContext;
+  try {
+    ctx = await buildContext(cmd.transcript);
+    decision = await route(ctx, { confidenceThreshold: getSettings().confidenceThreshold });
+  } catch (err) {
+    fileLog("route", "threw", { message: describe(err) });
+    finish("failed", cmd, null, null, describe(err), started, cmd.transcribeMs, 0);
+    return;
+  }
+
+  fileLog("route", "decision", {
+    transcript: cmd.transcript,
+    action: decision.action,
+    args: decision.args,
+    confidence: Number(decision.confidence.toFixed(3)),
+    addressed: Number(decision.addressed.toFixed(3)),
+    risk: Number(decision.risk.toFixed(2)),
+    offline: decision.offline,
+    routeMs: decision.ms,
+    inputTokens: decision.inputTokens,
+    reason: decision.reason,
+  });
+
+  // Not addressed to the agent — most likely a false wake while the user was
+  // talking to someone else. Say nothing and go back to waiting.
+  if (decision.addressed < 0.35) {
+    finish("cancelled", cmd, decision, null, "not addressed to the agent", started, cmd.transcribeMs, decision.ms, true);
+    return;
+  }
+
+  if (!decision.action) {
+    finish("rejected", cmd, decision, null, decision.reason ?? "No matching command", started, cmd.transcribeMs, decision.ms);
+    return;
+  }
+
+  const missing = missingSlots(decision.action, decision.args);
+  if (missing.length > 0) {
+    finish("rejected", cmd, decision, decision.action, `Could not work out the ${missing.join(" and ")}`, started, cmd.transcribeMs, decision.ms);
+    return;
+  }
+
+  // Confidence gate. Jev reports calibrated confidence, and a 50-command
+  // calibration run put correct answers at a mean of 0.98 and wrong ones at
+  // 0.53 — so this threshold is a real dial, not a guess.
+  if (decision.confidence < getSettings().confidenceThreshold) {
+    finish("rejected", cmd, decision, decision.action, `Not sure enough — did you mean to ${phrase(decision.action).toLowerCase()}?`, started, cmd.transcribeMs, decision.ms);
+    return;
+  }
+
+  // Destructive actions need a spoken yes, gated on BOTH the registry flag and
+  // the model's own read of how much damage a misunderstanding would do.
+  const dangerous = ACTIONS[decision.action].destructive === true || decision.risk >= 2.5;
+  if (dangerous && getSettings().confirmDestructive) {
+    pending = { action: decision.action, args: decision.args, ctx, askedAt: Date.now() };
+    coordinator.setState("confirming", `${phrase(decision.action)}? Say yes to confirm.`);
+    play("confirm");
+    showHud();
+    fileLog("route", "awaiting-confirmation", { action: decision.action });
+    return;
+  }
+
+  await runAction(decision.action, decision.args, ctx, cmd, decision, started);
+}
+
+async function resolveConfirmation(cmd: CommandAudio, started: number): Promise<void> {
+  const held = pending!;
+  pending = null;
+
+  if (Date.now() - held.askedAt > CONFIRM_WINDOW_MS) {
+    finish("cancelled", cmd, null, held.action, "Confirmation expired", started, cmd.transcribeMs, 0);
+    return;
+  }
+
+  const answer = readConfirmation(cmd.transcript);
+  fileLog("route", "confirmation", { action: held.action, answer, said: cmd.transcript });
+
+  if (answer === "yes") {
+    await runAction(held.action, held.args, held.ctx, cmd, null, started);
+    return;
+  }
+  // Anything that is not a clear yes is a no. Silence, a mumble, or a brand new
+  // command all mean "do not do the destructive thing".
+  finish("cancelled", cmd, null, held.action, answer === "no" ? "Cancelled" : "Not confirmed", started, cmd.transcribeMs, 0);
+}
+
+async function runAction(
+  action: ActionKey,
+  args: Record<string, string | number>,
+  ctx: ActionContext,
+  cmd: CommandAudio,
+  decision: RouteDecision | null,
+  started: number,
+): Promise<void> {
+  coordinator.setState("executing", phrase(action));
+  const execStarted = Date.now();
+  try {
+    const result = await execute(action, args, platform(), ctx);
+    const execMs = Date.now() - execStarted;
+    fileLog("execute", "ok", { action, args, execMs });
+
+    // A couple of actions steer the agent itself rather than the OS.
+    if (action === "stop_listening") stopListening();
+
+    finish("ok", cmd, decision, action, result.detail ?? phrase(action), started, cmd.transcribeMs, decision?.ms ?? 0, false, execMs);
+  } catch (err) {
+    fileLog("execute", "failed", { action, args, message: describe(err) });
+    finish("failed", cmd, decision, action, describe(err), started, cmd.transcribeMs, decision?.ms ?? 0);
+  }
+}
+
+/** Human-readable name for an action key. */
+function phrase(action: ActionKey): string {
+  return action.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}
+
+function describe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Single exit point: earcon, HUD, activity log, and return to idle. */
+function finish(
+  outcome: "ok" | "rejected" | "failed" | "cancelled",
+  cmd: CommandAudio,
+  decision: RouteDecision | null,
+  action: ActionKey | null,
+  detail: string,
+  started: number,
+  transcribeMs: number,
+  routeMs: number,
+  silent = false,
+  execMs = 0,
+): void {
+  if (!silent) play(outcome === "ok" ? "success" : outcome === "cancelled" ? "cancel" : "error");
+  coordinator.setState(outcome === "ok" ? "executing" : outcome === "failed" ? "error" : "idle", detail);
+  fileLog("agent", "finish", { outcome, action, detail });
 
   log({
     transcript: cmd.transcript,
-    action: null,
-    outcome: "ok",
-    detail: `${cmd.trigger} trigger · ${cmd.durationSec.toFixed(1)}s audio`,
-    timings: { transcribe: cmd.transcribeMs, total: cmd.transcribeMs },
+    action,
+    confidence: decision?.confidence ?? null,
+    offline: decision?.offline ?? false,
+    outcome,
+    detail,
+    timings: {
+      transcribe: transcribeMs,
+      route: routeMs,
+      execute: execMs,
+      total: Date.now() - started + transcribeMs,
+    },
+    ...(decision?.inputTokens ? { inputTokens: decision.inputTokens } : {}),
   });
 
-  setTimeout(() => {
-    coordinator.setState("idle");
-    coordinator.setTranscript("", false);
-    hideHud();
-  }, 1800);
+  setTimeout(
+    () => {
+      if (coordinator.getState() === "confirming") return; // a new prompt took over
+      coordinator.setState("idle");
+      coordinator.setTranscript("", false);
+      hideHud();
+    },
+    outcome === "ok" ? 1600 : 2600,
+  );
 }
 
 function log(partial: Partial<CommandLogEntry> & { transcript: string }): void {

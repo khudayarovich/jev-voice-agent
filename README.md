@@ -49,8 +49,30 @@ handles the common commands but is much blunter.
 | Stage | Time |
 |---|---|
 | Transcription (3 s command, base.en + Metal) | ~65 ms |
-| Jev routing | 70–500 ms (one round trip, all questions in parallel) |
-| Cost per command | ~0.003 ¢ |
+| Jev routing | p50 410 ms, p95 1.2 s |
+| Cost | ~$0.08 per 1000 commands |
+
+### Routing accuracy
+
+`npm run calibrate` replays 50 labelled commands through the real API:
+
+```
+accuracy          100.0%  (50/50)
+local matcher      96.0%  (the offline fallback, for comparison)
+confidence  hit   mean 0.980   p10 0.970
+latency           mean 489ms   p50 410ms   p95 1222ms
+tokens            1901 per command
+```
+
+Confidence is well separated: before the criteria were tightened, the two wrong
+answers sat at 0.53 while every correct one was above 0.97 — so the default
+0.55 gate refused exactly the wrong answers and nothing else. That is why the
+threshold is set where it is, and re-running this is how to move it.
+
+The focused app measurably helps. "copy that" is ambiguous on its own
+(confidence 0.50 in Finder), rises to 0.63 in a code editor, and in Messages the
+*addressed* score falls to 0.29 — the model correctly suspects you may be
+talking to a person, and the agent stays quiet.
 
 ## Commands
 

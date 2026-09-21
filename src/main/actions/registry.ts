@@ -403,8 +403,9 @@ export const ACTIONS = {
 
   // --- editing -----------------------------------------------------------
   copy: action({
-    describe: "Copy the current selection to the clipboard.",
-    examples: ["copy that", "copy this"],
+    describe:
+      "Copy the currently selected text or item to the clipboard. Use for any request to copy something.",
+    examples: ["copy that", "copy this", "copy the selection"],
     slots: {},
     async run(_a, os) {
       await os.keystroke({ key: "c", modifiers: ["command"] });
@@ -473,8 +474,9 @@ export const ACTIONS = {
   }),
 
   find: action({
-    describe: "Open the find bar in the current application.",
-    examples: ["find", "search this page", "open find"],
+    describe:
+      "Open the find bar to search WITHIN the current document or page for text the user is looking at. Not for searching the internet.",
+    examples: ["find", "find in this page", "open the find bar"],
     slots: {},
     async run(_a, os) {
       await os.keystroke({ key: "f", modifiers: ["command"] });
@@ -621,7 +623,8 @@ export const ACTIONS = {
   }),
 
   web_search: action({
-    describe: "Search the web for something the user described in words, not a specific address.",
+    describe:
+      "Search the internet for information. Use whenever the user wants to look something up online, including phrasings like 'search for', rather than searching inside the current document.",
     examples: ["search for typescript generics", "google the weather", "look up pasta recipes"],
     slots: {
       query: textSlot("What to search for", (t) =>
@@ -668,8 +671,8 @@ export const ACTIONS = {
   // --- agent meta --------------------------------------------------------
   cancel: action({
     describe:
-      "The user is cancelling, dismissing, or telling the assistant to ignore what they just said. Do nothing.",
-    examples: ["never mind", "cancel", "forget it", "stop"],
+      "The user is retracting what they just said and wants nothing to happen. Use ONLY when they are calling off a request, never when they are asking for an action to be performed.",
+    examples: ["never mind", "forget it", "ignore that", "cancel that"],
     slots: {},
     async run() {
       return { detail: "Cancelled" };

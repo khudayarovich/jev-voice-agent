@@ -22,6 +22,29 @@ const exec = promisify(execFile);
  * Every osascript call carries a double timeout — see osascript.ts for why.
  */
 
+/**
+ * Turn an opaque tool failure into something that names the actual problem.
+ *
+ * `screencapture` fails with "could not create image from display" when Screen
+ * Recording is not granted, and AppleScript returns -1743 when Automation is
+ * not. Both are permission problems wearing an unhelpful disguise, and showing
+ * the raw text to a user tells them nothing about what to do.
+ */
+function translatePermissionError(err: unknown, kind: "screenRecording" | "accessibility"): Error {
+  const text = err instanceof Error ? err.message : String(err);
+  if (kind === "screenRecording" && /could not create image|not authori[sz]ed/i.test(text)) {
+    return new Error(
+      "Screen Recording permission is needed for screenshots. Grant it in Settings → Permissions.",
+    );
+  }
+  if (kind === "accessibility" && /not allowed to send keystrokes|1002/.test(text)) {
+    return new Error(
+      "Accessibility permission is needed to press keys. Grant it in Settings → Permissions.",
+    );
+  }
+  return err instanceof Error ? err : new Error(text);
+}
+
 /** macOS virtual key codes for keys that have no character. */
 const KEY_CODES: Record<string, number> = {
   return: 36, enter: 36, tab: 48, space: 49, delete: 51, escape: 53,
@@ -271,7 +294,11 @@ return appName & "\\n" & winTitle`;
     const code = KEY_CODES[combo.key.toLowerCase()];
     const action =
       code !== undefined ? `key code ${code}${using}` : `keystroke ${asStr(combo.key)}${using}`;
-    await osa(`tell application "System Events" to ${action}`, { timeoutMs: 5000 });
+    try {
+      await osa(`tell application "System Events" to ${action}`, { timeoutMs: 5000 });
+    } catch (err) {
+      throw translatePermissionError(err, "accessibility");
+    }
   }
 
   /** Raw key code, optionally as a media key. */
@@ -342,7 +369,11 @@ end tell`;
       `Screenshot ${new Date().toISOString().replace(/[:.]/g, "-")}.png`,
     );
     const args = mode === "selection" ? ["-i"] : mode === "window" ? ["-iW"] : ["-x"];
-    await exec("/usr/sbin/screencapture", [...args, file], { timeout: 60_000 });
+    try {
+      await exec("/usr/sbin/screencapture", [...args, file], { timeout: 60_000 });
+    } catch (err) {
+      throw translatePermissionError(err, "screenRecording");
+    }
     return file;
   }
 

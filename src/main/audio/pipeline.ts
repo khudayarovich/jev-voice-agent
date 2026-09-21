@@ -72,6 +72,9 @@ export interface WakeLike {
   stop(): void;
 }
 
+/** Diagnostics hook. Nothing is inferred from silence in the log. */
+export type PipelineTrace = (event: string, data?: Record<string, unknown>) => void;
+
 export interface PipelineDeps {
   speech: SpeechEngine;
   vad: VadLike;
@@ -83,6 +86,8 @@ export interface PipelineDeps {
    * stopping the agent from hearing itself.
    */
   isSelfAudioActive: () => boolean;
+  /** Optional structured trace; defaults to a no-op. */
+  trace?: PipelineTrace;
 }
 
 export interface CommandAudio {
@@ -132,12 +137,15 @@ export class AudioPipeline extends EventEmitter {
   // emit code, so Node's type-stripping test runner rejects them.
   private readonly deps: PipelineDeps;
   private settings: AppSettings;
+  private readonly trace: PipelineTrace;
+  private wasSpeaking = false;
 
   constructor(deps: PipelineDeps, settings: AppSettings) {
     super();
     this.deps = deps;
     this.settings = settings;
     this.vad = deps.vad;
+    this.trace = deps.trace ?? (() => {});
   }
 
   get listening(): boolean {
@@ -205,6 +213,10 @@ export class AudioPipeline extends EventEmitter {
     this.vad.accept(samples);
     const speaking = this.vad.speaking;
     if (speaking) this.lastSpeechAt = Date.now();
+    if (speaking !== this.wasSpeaking) {
+      this.wasSpeaking = speaking;
+      this.trace("vad", { speaking, gain: Number(this.wakeGain.value.toFixed(1)) });
+    }
 
     if (this.mode === "armed") {
       this.detectWake(samples, speaking);
@@ -217,11 +229,15 @@ export class AudioPipeline extends EventEmitter {
     if (!this.wake) return;
     // Gained, because the spotter is strongly level-dependent: the same phrase
     // at a normal speaking level is missed at every threshold without this.
-    const hit = this.wake.accept(this.wakeGain.process(samples));
+    const gained = this.wakeGain.process(samples);
+    const hit = this.wake.accept(gained);
     if (!hit) return;
     // Two-factor: the keyword score fired AND the VAD agrees someone is
     // actually speaking. The spotter alone is the noisier of the two signals.
-    if (!speaking && !this.recentSpeech(400)) return;
+    const corroborated = speaking || this.recentSpeech(400);
+    this.trace("wake-hit", { phrase: hit.phrase, speaking, corroborated,
+                             gain: Number(this.wakeGain.value.toFixed(1)) });
+    if (!corroborated) return;
     this.begin("wake");
   }
 

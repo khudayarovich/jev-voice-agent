@@ -16,7 +16,8 @@
     "start": "npm run build && electron .",
     "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
     "dist": "npm run build && electron-builder",
-    "tail": "tail -f \"$HOME/Library/Application Support/jev-voice-agent/jev.log\""
+    "tail": "tail -f \"$HOME/Library/Application Support/jev-voice-agent/jev.log\"",
+    "calibrate": "node --experimental-strip-types scripts/calibrate.mjs"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "0.6.0",
