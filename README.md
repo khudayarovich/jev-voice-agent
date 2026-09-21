@@ -8,10 +8,23 @@ tones and a menu-bar indicator; there is no talking assistant.
 ## How it works
 
 ```
-mic → wake word → VAD endpoint → local STT
+mic → VAD endpoint → local STT → wake phrase in the transcript?
     → local pre-parser (candidate generation)
     → ONE Jev systemOne call  → confidence gate → typed executor
+    → conversation stays open: keep talking, no wake word needed
 ```
+
+The wake phrase is matched **in the transcript**, not by a keyword spotter. A
+spotter was tried first and measured: the same phrase at ordinary speaking
+volume was missed at every threshold, while whisper — already running, and
+returning in ~65 ms — recognises it dependably. The spotter is still there as an
+optional fast path that lights the overlay early when it does fire, but nothing
+depends on it. While the wake word is off, no ambient speech is transcribed at
+all.
+
+Say "Hey Jeff" once and the conversation stays open: keep giving commands until
+you say "that's it", "thanks", or "that's all", or until it goes quiet. The
+menu-bar icon shows sound waves the whole time it is still listening.
 
 Everything from the microphone to the transcript runs **on this machine**. Only
 the routing decision — a short transcript plus a small structured context

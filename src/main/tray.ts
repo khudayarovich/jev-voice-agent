@@ -26,6 +26,7 @@ let cbs: TrayCallbacks | null = null;
 const LABEL: Record<AgentState, string> = {
   disabled: "Listening off",
   idle: "Ready",
+  conversing: "Listening for more",
   listening: "Listening…",
   thinking: "Thinking…",
   executing: "Running…",

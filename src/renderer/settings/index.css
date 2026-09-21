@@ -53,6 +53,7 @@ body {
 }
 .brand-dot.idle { background: var(--ok); }
 .brand-dot.listening { background: var(--ok); }
+.brand-dot.conversing { background: var(--ok); opacity: 0.7; }
 .brand-dot.thinking, .brand-dot.executing { background: var(--accent); }
 .brand-dot.confirming { background: var(--warn); }
 .brand-dot.error { background: var(--bad); }

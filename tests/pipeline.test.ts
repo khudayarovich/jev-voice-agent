@@ -98,7 +98,7 @@ function harness(overrides: Partial<{ transcript: string; settings: typeof DEFAU
   };
 
   const pipeline = new AudioPipeline(deps, overrides.settings ?? DEFAULT_SETTINGS);
-  for (const name of ["trigger", "endpoint", "cancelled", "command", "error"] as const) {
+  for (const name of ["trigger", "endpoint", "cancelled", "command", "error", "prompt"] as const) {
     pipeline.on(name as "command", (payload: unknown) => {
       events.push(name);
       if (name === "command") transcripts.push((payload as { transcript: string }).transcript);
@@ -121,6 +121,17 @@ function harness(overrides: Partial<{ transcript: string; settings: typeof DEFAU
 
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
+/** Speak, go quiet, and let the endpoint fire. */
+async function speakUtterance(h: Harness, blocks = 8): Promise<void> {
+  h.setSpeaking(true);
+  h.feed(1);
+  h.feed(blocks);
+  h.setSpeaking(false);
+  await new Promise((r) => setTimeout(r, 750));
+  h.feed(1);
+  await settle();
+}
+
 // --- tests -----------------------------------------------------------------
 
 test("ignores audio entirely until armed", () => {
@@ -131,12 +142,23 @@ test("ignores audio entirely until armed", () => {
   assert.deepEqual(h.events, []);
 });
 
-test("a wake word with concurrent speech starts a capture", () => {
+test("speech while armed starts a SILENT capture — nothing is announced yet", () => {
+  // We do not know it was meant for us until the transcript says so, and an
+  // earcon every time someone in the room speaks would be intolerable.
   const h = harness();
   h.pipeline.arm();
   h.setSpeaking(true);
+  h.feed(2);
+  assert.deepEqual(h.events, [], "no trigger until it is known to be addressed");
+});
+
+test("the keyword spotter promotes a capture already in flight", () => {
+  const h = harness();
+  h.pipeline.arm();
+  h.setSpeaking(true);
+  h.feed(1);            // speculative capture begins, silently
   h.fireWake();
-  h.feed(1);
+  h.feed(1);            // spotter fires -> promoted, user gets the cue
   assert.deepEqual(h.events, ["trigger"]);
 });
 
@@ -207,21 +229,48 @@ test("a trigger with no speech cancels quietly instead of transcribing", async (
 });
 
 test("returns to armed after a command, ready for the next one", async () => {
-  const h = harness();
+  const h = harness({ transcript: "hey jeff open safari" });
   h.pipeline.arm();
-  h.setSpeaking(true);
-  h.fireWake();
-  h.feed(1);
-  h.feed(8);
-  h.setSpeaking(false);
-  await new Promise((r) => setTimeout(r, 750));
-  h.feed(1);
-  await settle();
-  // second command works too
-  h.setSpeaking(true);
-  h.fireWake();
-  h.feed(1);
-  assert.equal(h.events.filter((e) => e === "trigger").length, 2);
+  await speakUtterance(h);
+  assert.deepEqual(h.transcripts, ["open safari"]);
+
+  // and again
+  await speakUtterance(h);
+  assert.deepEqual(h.transcripts, ["open safari", "open safari"]);
+});
+
+// --- transcript is the wake detector ---------------------------------------
+
+test("a transcript opening with the wake phrase becomes a command", async () => {
+  const h = harness({ transcript: "Hey Jeff, open Safari" });
+  h.pipeline.arm();
+  await speakUtterance(h);
+  assert.deepEqual(h.transcripts, ["open Safari"], "the wake phrase is stripped off");
+});
+
+test("a transcript WITHOUT the wake phrase is discarded silently", async () => {
+  const h = harness({ transcript: "so anyway I told him it was fine" });
+  h.pipeline.arm();
+  await speakUtterance(h);
+  assert.deepEqual(h.transcripts, []);
+  assert.ok(h.events.includes("cancelled"));
+  assert.ok(!h.events.includes("trigger"), "nothing should have been announced");
+});
+
+test("the bare wake phrase asks the user to go ahead", async () => {
+  const h = harness({ transcript: "Hey Jeff" });
+  h.pipeline.arm();
+  await speakUtterance(h);
+  assert.ok(h.events.includes("prompt"));
+  assert.deepEqual(h.transcripts, [], "there was no command to run yet");
+});
+
+test("the wake phrase is recognised even when the spotter never fires", async () => {
+  // This is the whole point of the change: the spotter missing is normal.
+  const h = harness({ transcript: "hey jef take a screenshot" });
+  h.pipeline.arm();
+  await speakUtterance(h);
+  assert.deepEqual(h.transcripts, ["take a screenshot"]);
 });
 
 test("disarm stops everything", () => {
@@ -249,4 +298,123 @@ test("an empty transcript cancels rather than reporting a blank command", async 
   await settle();
   assert.deepEqual(h.transcripts, []);
   assert.ok(h.events.includes("cancelled"));
+});
+
+// --- conversation mode -----------------------------------------------------
+
+test("with a conversation open, speech alone starts a capture", () => {
+  const h = harness();
+  h.pipeline.arm();
+  h.pipeline.openFollowUp(10_000);
+  h.setSpeaking(true);
+  h.feed(1);
+  // No wake word was fired, and none was needed.
+  assert.deepEqual(h.events, ["trigger"]);
+});
+
+test("without a conversation open, speech alone is ignored", () => {
+  const h = harness();
+  h.pipeline.arm();
+  h.setSpeaking(true);
+  h.feed(3);
+  assert.deepEqual(h.events, [], "the wake word is still required outside a conversation");
+});
+
+test("a conversation lapses on its own and says so", async () => {
+  const h = harness();
+  const ended: string[] = [];
+  h.pipeline.on("followUpEnded", (r) => ended.push(r));
+  h.pipeline.arm();
+  h.pipeline.openFollowUp(120);
+  assert.equal(h.pipeline.inFollowUp, true);
+
+  await new Promise((r) => setTimeout(r, 200));
+  h.setSpeaking(false);
+  h.feed(1); // the lapse is noticed on the next frame
+
+  assert.equal(h.pipeline.inFollowUp, false);
+  assert.deepEqual(ended, ["timeout"]);
+});
+
+test("once lapsed, speech no longer triggers without the wake word", async () => {
+  const h = harness();
+  h.pipeline.arm();
+  h.pipeline.openFollowUp(100);
+  await new Promise((r) => setTimeout(r, 180));
+  h.setSpeaking(true);
+  h.feed(2);
+  assert.deepEqual(h.events, [], "the conversation had already closed");
+});
+
+test("closing a conversation explicitly takes effect immediately", () => {
+  const h = harness();
+  h.pipeline.arm();
+  h.pipeline.openFollowUp(10_000);
+  h.pipeline.closeFollowUp("dismissed");
+  h.setSpeaking(true);
+  h.feed(2);
+  assert.deepEqual(h.events, []);
+});
+
+test("a follow-up capture keeps the whole transcript", async () => {
+  // Only a wake-triggered capture reaches back over the wake phrase, so only
+  // that one should have anything stripped from it.
+  const h = harness({ transcript: "hey there open safari" });
+  h.pipeline.arm();
+  h.pipeline.openFollowUp(10_000);
+  h.setSpeaking(true);
+  h.feed(1);
+  h.feed(8);
+  h.setSpeaking(false);
+  await new Promise((r) => setTimeout(r, 750));
+  h.feed(1);
+  await settle();
+  assert.deepEqual(h.transcripts, ["hey there open safari"]);
+});
+
+test("disarming clears any open conversation", () => {
+  const h = harness();
+  h.pipeline.arm();
+  h.pipeline.openFollowUp(10_000);
+  h.pipeline.disarm();
+  assert.equal(h.pipeline.inFollowUp, false);
+});
+
+test("the wake word still works during a conversation", () => {
+  const h = harness();
+  h.pipeline.arm();
+  h.pipeline.openFollowUp(10_000);
+  h.setSpeaking(true);
+  h.fireWake();
+  h.feed(1);
+  assert.deepEqual(h.events, ["trigger"]);
+});
+
+test("with the wake word off, ambient speech is not captured at all", async () => {
+  // Privacy and battery both depend on this: no wake word means no speculative
+  // transcription of whatever is said near the microphone.
+  const h = harness({
+    transcript: "hey jeff open safari",
+    settings: { ...DEFAULT_SETTINGS, wakeWordEnabled: false },
+  });
+  h.pipeline.arm();
+  await speakUtterance(h);
+  assert.deepEqual(h.transcripts, []);
+  assert.deepEqual(h.events, []);
+});
+
+test("with the wake word off, the hotkey still works", async () => {
+  const h = harness({
+    transcript: "open safari",
+    settings: { ...DEFAULT_SETTINGS, wakeWordEnabled: false },
+  });
+  h.pipeline.arm();
+  h.pipeline.begin("hotkey");
+  h.setSpeaking(true);
+  h.feed(8);
+  h.setSpeaking(false);
+  await new Promise((r) => setTimeout(r, 750));
+  h.feed(1);
+  await settle();
+  assert.deepEqual(h.transcripts, ["open safari"]);
 });

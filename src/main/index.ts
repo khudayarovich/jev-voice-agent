@@ -80,13 +80,23 @@ async function main(): Promise<void> {
   coordinator.on("listening", () => refreshTrayMenu());
   coordinator.on("log", (entry) => broadcast(IPC.logAppended, entry));
 
+  setTrayState("disabled");
+
   // Open Settings on first run so the user lands on the permissions and API-key
   // pane rather than wondering what the new menu-bar icon is.
-  if (!apiKeySummary().present || !permissions.requiredSatisfied()) {
+  const configured = apiKeySummary().present && permissions.requiredSatisfied();
+  if (!configured) {
     openSettings();
+    return;
   }
 
-  setTrayState("disabled");
+  // Already set up: start listening without being asked. Needing to open a
+  // settings window before the agent will listen is not what anyone wants from
+  // something that lives in the menu bar.
+  if (getSettings().listenOnStart) {
+    log("app", "auto-start", {});
+    void startListening();
+  }
 }
 
 function broadcast(channel: string, payload: unknown): void {

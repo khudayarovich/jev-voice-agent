@@ -33,6 +33,7 @@ body { display: flex; align-items: flex-start; justify-content: center; padding-
   box-shadow: 0 0 0 0 rgba(255,255,255,0);
 }
 .dot.listening  { background: #30d158; animation: pulse 1.25s ease-in-out infinite; }
+.dot.conversing { background: #30d158; opacity: 0.7; }
 .dot.thinking   { background: #0a84ff; animation: pulse 0.9s ease-in-out infinite; }
 .dot.executing  { background: #5e5ce6; }
 .dot.confirming { background: #ff9f0a; animation: pulse 0.7s ease-in-out infinite; }

@@ -9,6 +9,7 @@
 export type AgentState =
   | "disabled" // listening turned off by the user
   | "idle" // armed, waiting for the wake word or hotkey
+  | "conversing" // a conversation is open: speak again, no wake word needed
   | "listening" // capturing a command utterance
   | "thinking" // transcribing and/or asking Jev
   | "executing" // running the chosen action
@@ -92,6 +93,15 @@ export interface AppSettings {
   confirmDestructive: boolean;
   /** Fall back to the local deterministic matcher when Jev is unreachable. */
   offlineFallback: boolean;
+  /**
+   * After a command, keep listening for more without needing the wake word
+   * again, until the user dismisses it or it times out.
+   */
+  followUp: boolean;
+  /** Begin listening as soon as the app launches, if it is set up to. */
+  listenOnStart: boolean;
+  /** How long a conversation stays open after the last exchange, in seconds. */
+  followUpSeconds: number;
   launchAtLogin: boolean;
   /** Preferred audio input device id, or "" for the system default. */
   inputDeviceId: string;
@@ -110,6 +120,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   confidenceThreshold: 0.55,
   confirmDestructive: true,
   offlineFallback: true,
+  followUp: true,
+  followUpSeconds: 15,
+  listenOnStart: true,
   launchAtLogin: false,
   inputDeviceId: "",
 };

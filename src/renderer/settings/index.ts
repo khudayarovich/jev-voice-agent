@@ -85,15 +85,19 @@ async function hydrate(): Promise<void> {
   $<HTMLInputElement>("confidenceThreshold").value = String(settings.confidenceThreshold);
   $<HTMLInputElement>("confirmDestructive").checked = settings.confirmDestructive;
   $<HTMLInputElement>("launchAtLogin").checked = settings.launchAtLogin;
+  $<HTMLInputElement>("followUp").checked = settings.followUp;
+  $<HTMLInputElement>("listenOnStart").checked = settings.listenOnStart;
+  $<HTMLInputElement>("followUpSeconds").value = String(settings.followUpSeconds);
 
   $<HTMLOutputElement>("wakeThresholdOut").textContent = pct(settings.wakeThreshold);
   $<HTMLOutputElement>("earconVolumeOut").textContent = pct(settings.earconVolume);
   $<HTMLOutputElement>("confidenceOut").textContent = pct(settings.confidenceThreshold);
+  $<HTMLOutputElement>("followUpSecondsOut").textContent = `${settings.followUpSeconds}s of quiet`;
 
   hydrating = false;
 }
 
-for (const id of ["offlineFallback", "wakeWordEnabled", "earcons", "confirmDestructive", "launchAtLogin"] as const) {
+for (const id of ["offlineFallback", "wakeWordEnabled", "earcons", "confirmDestructive", "launchAtLogin", "followUp", "listenOnStart"] as const) {
   bindCheckbox(id);
 }
 for (const id of ["model", "baseUrl", "hotkey"] as const) bindText(id);
@@ -101,6 +105,7 @@ for (const id of ["model", "baseUrl", "hotkey"] as const) bindText(id);
 bindRange("wakeThreshold", $<HTMLOutputElement>("wakeThresholdOut"), pct);
 bindRange("earconVolume", $<HTMLOutputElement>("earconVolumeOut"), pct);
 bindRange("confidenceThreshold", $<HTMLOutputElement>("confidenceOut"), pct);
+bindRange("followUpSeconds", $<HTMLOutputElement>("followUpSecondsOut"), (v) => `${v}s of quiet`);
 
 $<HTMLInputElement>("wakeWords").addEventListener("change", (e) => {
   const words = (e.target as HTMLInputElement).value
@@ -398,6 +403,7 @@ $<HTMLInputElement>("commandFilter").addEventListener("input", (e) => {
 const STATE_TEXT: Record<AgentState, string> = {
   disabled: "Listening off",
   idle: "Ready",
+  conversing: "Listening for more…",
   listening: "Listening…",
   thinking: "Thinking…",
   executing: "Running…",

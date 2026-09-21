@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { AppSettings } from "../../shared/types.ts";
 import { AutoGain, normalizeUtterance } from "./gain.ts";
 import { RingBuffer } from "./ring-buffer.ts";
+import { matchWake } from "./wake-match.ts";
 import { SAMPLE_RATE, int16ToFloat32 } from "./wav.ts";
 import type { SpeechEngine } from "./whisper.ts";
 
@@ -32,9 +33,21 @@ const PRE_ROLL_SECONDS = 1.5;
  * fine — `stripWakePhrase` removes it from the transcript afterwards.
  */
 const PRE_ROLL_MS = {
+  /**
+   * Speech heard while armed, not yet known to be for us.
+   *
+   * Generous, because this reaches back over the wake phrase the user has
+   * already started saying.
+   */
+  speech: 900,
   wake: 700,
   /** The user may already be mid-sentence when they hit the key. */
   hotkey: 900,
+  /**
+   * A follow-up in an open conversation: no wake phrase to reach back past, but
+   * the VAD reports speech a beat after it actually starts, so still generous.
+   */
+  followup: 700,
 } as const;
 
 /** Trailing silence that ends an utterance. */
@@ -105,6 +118,9 @@ type Mode = "off" | "armed" | "capturing";
 
 export declare interface AudioPipeline {
   on(event: "command", fn: (c: CommandAudio) => void): this;
+  on(event: "followUpEnded", fn: (reason: string) => void): this;
+  /** The wake phrase was heard with no command after it. */
+  on(event: "prompt", fn: () => void): this;
   on(event: "trigger", fn: (kind: TriggerKind) => void): this;
   on(event: "endpoint", fn: () => void): this;
   on(event: "cancelled", fn: (reason: string) => void): this;
@@ -126,12 +142,28 @@ export class AudioPipeline extends EventEmitter {
   private readonly vad: VadLike;
   private wake: WakeLike | null = null;
 
+  /**
+   * While this is in the future, speech alone starts a capture — no wake word.
+   *
+   * This is what makes a conversation possible: say "Hey Jeff" once, then keep
+   * giving commands until you dismiss it or it times out. It is also what makes
+   * confirmations usable at all, since otherwise answering "yes" to "empty the
+   * Trash?" would require saying the wake word again first.
+   */
+  private followUpUntil = 0;
+
   private capture: Float32Array[] = [];
   private capturedSamples = 0;
   private captureStartedAt = 0;
   private lastSpeechAt = 0;
   private sawSpeech = false;
   private trigger: TriggerKind = "hotkey";
+  /**
+   * True once we know this capture is meant for us — the keyword spotter fired,
+   * the hotkey was pressed, or a conversation was already open. When false the
+   * transcript has to prove it by opening with the wake phrase.
+   */
+  private addressed = false;
 
   // Written out rather than declared as TypeScript parameter properties: those
   // emit code, so Node's type-stripping test runner rejects them.
@@ -160,6 +192,22 @@ export class AudioPipeline extends EventEmitter {
     return this.wake?.unsupportedPhrases ?? [];
   }
 
+  /** Keep listening for another command without the wake word. */
+  openFollowUp(windowMs: number): void {
+    this.followUpUntil = Date.now() + windowMs;
+    this.trace("follow-up-open", { windowMs });
+  }
+
+  closeFollowUp(reason: string): void {
+    if (!this.followUpUntil) return;
+    this.followUpUntil = 0;
+    this.trace("follow-up-close", { reason });
+  }
+
+  get inFollowUp(): boolean {
+    return Date.now() < this.followUpUntil;
+  }
+
   arm(): void {
     this.vad.start();
     if (this.settings.wakeWordEnabled) this.startWake();
@@ -168,6 +216,7 @@ export class AudioPipeline extends EventEmitter {
 
   disarm(): void {
     this.mode = "off";
+    this.followUpUntil = 0;
     this.resetCapture();
     this.vad.reset();
     this.wake?.stop();
@@ -219,12 +268,48 @@ export class AudioPipeline extends EventEmitter {
     }
 
     if (this.mode === "armed") {
+      // An open conversation lapses on its own, so the agent can stand down and
+      // the HUD can stop claiming to be listening.
+      if (this.followUpUntil && Date.now() >= this.followUpUntil) {
+        this.followUpUntil = 0;
+        this.trace("follow-up-close", { reason: "timeout" });
+        this.emit("followUpEnded", "timeout");
+      }
+      // In a conversation, speech alone is enough and is known to be for us.
+      if (this.inFollowUp && speaking) {
+        this.begin("followup");
+        return;
+      }
+      // Otherwise, start capturing on ANY speech — speculatively, with no
+      // earcon and no overlay, because we do not yet know it was meant for us.
+      //
+      // The keyword spotter used to be the only way in, and it was not reliable
+      // enough: the same phrase at ordinary speaking volume was missed at every
+      // threshold. The transcript decides instead, and the spotter is kept only
+      // as a fast path that lights the overlay early when it does fire.
+      // Gated on the wake word being enabled at all. With it off, the agent
+      // must not be transcribing every utterance in the room — only what the
+      // hotkey explicitly captures.
+      if (speaking && this.settings.wakeWordEnabled) {
+        this.begin("speech");
+        return;
+      }
       this.detectWake(samples, speaking);
       return;
     }
+    // Keep the spotter running during a speculative capture, so it can still
+    // promote it mid-sentence.
+    if (this.trigger === "speech" && !this.addressed) this.detectWake(samples, speaking);
     this.accumulate(samples, speaking);
   }
 
+  /**
+   * Optional fast path.
+   *
+   * When the spotter does fire it is worth acting on immediately: the user gets
+   * the "listening" cue while they are still speaking. When it does not, the
+   * transcript check at the end of the utterance covers it.
+   */
   private detectWake(samples: Float32Array, speaking: boolean): void {
     if (!this.wake) return;
     // Gained, because the spotter is strongly level-dependent: the same phrase
@@ -238,6 +323,15 @@ export class AudioPipeline extends EventEmitter {
     this.trace("wake-hit", { phrase: hit.phrase, speaking, corroborated,
                              gain: Number(this.wakeGain.value.toFixed(1)) });
     if (!corroborated) return;
+    if (this.mode === "capturing") {
+      // Already capturing speculatively: promote it, and let the user know.
+      if (!this.addressed) {
+        this.addressed = true;
+        this.trigger = "wake";
+        this.emit("trigger", "wake");
+      }
+      return;
+    }
     this.begin("wake");
   }
 
@@ -262,7 +356,10 @@ export class AudioPipeline extends EventEmitter {
       this.capture.push(preRoll);
       this.capturedSamples += preRoll.length;
     }
-    this.emit("trigger", trigger);
+    this.addressed = trigger !== "speech";
+    // A speculative capture announces nothing: an earcon every time anyone in
+    // the room speaks would be intolerable.
+    if (this.addressed) this.emit("trigger", trigger);
   }
 
   private accumulate(samples: Float32Array, speaking: boolean): void {
@@ -324,8 +421,32 @@ export class AudioPipeline extends EventEmitter {
       // can see the true peak, so it needs no smoothing and cannot pump.
       const raw = await this.deps.speech.transcribe(normalizeUtterance(audio));
       const transcribeMs = Date.now() - started;
-      const transcript =
-        this.trigger === "wake" ? stripWakePhrase(raw, this.settings.wakeWords) : raw;
+      if (!raw) {
+        this.emit("cancelled", "nothing recognised");
+        return;
+      }
+
+      let transcript: string;
+      if (this.addressed) {
+        // Known to be for us. The pre-roll may still have caught the wake
+        // phrase, so take it off if it is there.
+        transcript = stripWakePhrase(raw, this.settings.wakeWords);
+      } else {
+        // Speculative: it only counts if it opens with the wake phrase.
+        const hit = matchWake(raw, this.settings.wakeWords);
+        this.trace("wake-match", { matched: hit.matched, phrase: hit.phrase, raw });
+        if (!hit.matched) {
+          this.emit("cancelled", "not addressed");
+          return;
+        }
+        if (!hit.rest) {
+          // Just the wake phrase: acknowledge and wait for the actual command.
+          this.emit("prompt");
+          return;
+        }
+        transcript = hit.rest;
+      }
+
       if (!transcript) {
         this.emit("cancelled", "nothing recognised");
         return;

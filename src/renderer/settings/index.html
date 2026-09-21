@@ -96,7 +96,10 @@
           <input type="checkbox" id="wakeWordEnabled" />
           <span>
             <b>Wake word</b>
-            <small>Always listening for the phrase. Costs a little idle CPU.</small>
+            <small>
+              Listen for the phrase. Speech is transcribed on this Mac and discarded unless it
+              starts with a wake phrase — turn this off and only the hotkey will capture anything.
+            </small>
           </span>
         </label>
 
@@ -113,7 +116,11 @@
         <label class="field">
           <span class="label">Wake sensitivity <output id="wakeThresholdOut"></output></span>
           <input type="range" id="wakeThreshold" min="0.15" max="0.95" step="0.05" />
-          <span class="hint">Higher means fewer false triggers and more missed wakes.</span>
+          <span class="hint">
+            Only affects the fast keyword detector, which lights the overlay early when it fires.
+            The wake phrase is recognised from the transcript regardless, so a missed detection
+            here costs you nothing but the instant cue.
+          </span>
         </label>
       </div>
 
@@ -161,6 +168,34 @@
       </div>
 
       <div class="card">
+        <label class="switch">
+          <input type="checkbox" id="followUp" />
+          <span>
+            <b>Keep listening after a command</b>
+            <small>
+              Say the wake word once, then keep talking. The conversation stays open until you
+              say “that’s it”, “thanks”, or “that’s all” — or until it goes quiet.
+            </small>
+          </span>
+        </label>
+        <label class="field">
+          <span class="label">Close the conversation after <output id="followUpSecondsOut"></output></span>
+          <input type="range" id="followUpSeconds" min="5" max="60" step="5" />
+          <span class="hint">
+            The menu-bar icon shows sound waves while a conversation is open, so you can always
+            see when the microphone is still live.
+          </span>
+        </label>
+      </div>
+
+      <div class="card">
+        <label class="switch">
+          <input type="checkbox" id="listenOnStart" />
+          <span>
+            <b>Start listening on launch</b>
+            <small>Begin as soon as the app opens, provided permissions and a key are in place.</small>
+          </span>
+        </label>
         <label class="switch">
           <input type="checkbox" id="launchAtLogin" />
           <span><b>Launch at login</b><small>Start quietly in the menu bar.</small></span>

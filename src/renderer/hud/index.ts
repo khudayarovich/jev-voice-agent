@@ -16,6 +16,7 @@ const meterFill = document.querySelector("#meter > i") as HTMLElement;
 
 /** States that warrant showing the overlay at all. */
 const VISIBLE: ReadonlySet<AgentState> = new Set<AgentState>([
+  "conversing",
   "listening",
   "thinking",
   "executing",
@@ -34,7 +35,8 @@ function render(m: HudModel): void {
   text.replaceChildren(Object.assign(document.createElement("span"), { textContent: body }));
   meterFill.style.width = `${Math.round(m.level * 100)}%`;
 
-  const show = VISIBLE.has(m.state) && Boolean(body || m.state === "listening");
+  const show =
+    VISIBLE.has(m.state) && Boolean(body || m.state === "listening" || m.state === "conversing");
   window.clearTimeout(hideTimer);
   if (show) {
     pill.classList.remove("hidden");

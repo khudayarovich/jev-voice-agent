@@ -60,3 +60,54 @@ export function readConfirmation(transcript: string): "yes" | "no" | "unclear" {
   }
   return "unclear";
 }
+
+/**
+ * Is the user closing the conversation?
+ *
+ * Checked locally and before routing: it is a tiny fixed vocabulary, it must be
+ * instant, and sending "thanks, that's it" to the router would only invite it to
+ * be read as some command or other.
+ *
+ * The whole utterance has to be a dismissal. Requiring that, rather than merely
+ * containing one of these words, is what stops "thanks, now open Safari" from
+ * hanging up mid-sentence.
+ */
+export function isDismissal(transcript: string): boolean {
+  const t = transcript
+    .toLowerCase()
+    .replace(/['\u2019]/g, "")
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return false;
+
+  // Politeness and filler that may wrap a dismissal without changing it.
+  const stripped = t
+    .replace(/\b(ok|okay|cool|great|alright|right|well|so|and|um|uh|jeff|jev)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!stripped) return false;
+
+  const DISMISSALS = [
+    "thats it", "thats all", "thats everything", "thatll be all", "that is all",
+    "thank you", "thanks", "thank you very much", "thanks a lot", "no thanks",
+    "im done", "were done", "we are done", "all done", "done",
+    "nothing else", "nothing more", "that is it",
+    "goodbye", "bye", "bye bye", "see you", "stop", "finished",
+  ];
+  // Allow a dismissal to be built from adjacent fragments: "that's it, thanks".
+  let remaining = stripped;
+  let matchedAny = false;
+  for (const phrase of [...DISMISSALS].sort((a, b) => b.length - a.length)) {
+    if (remaining === phrase) return true;
+    if (remaining.startsWith(`${phrase} `)) {
+      remaining = remaining.slice(phrase.length + 1).trim();
+      matchedAny = true;
+    } else if (remaining.endsWith(` ${phrase}`)) {
+      remaining = remaining.slice(0, -(phrase.length + 1)).trim();
+      matchedAny = true;
+    }
+    if (!remaining) return true;
+  }
+  return matchedAny && remaining.length === 0;
+}

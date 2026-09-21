@@ -183,6 +183,15 @@ const GLYPHS = {
   },
   // running the action
   executing: (m) => mic(m, { solid: true }),
+  // conversation still open: not capturing right now, but no wake word needed.
+  // Deliberately distinct from `idle`, because "is it still listening to me?"
+  // is a question the user is entitled to answer at a glance.
+  conversing: (m) => {
+    mic(m, { solid: false });
+    // two sound arcs to the right, suggesting an open channel
+    m.ring(0.58, 0.45, 0.30, 0.055, 1, -Math.PI * 0.26, Math.PI * 0.26);
+    m.ring(0.58, 0.45, 0.44, 0.055, 1, -Math.PI * 0.2, Math.PI * 0.2);
+  },
   // waiting for a spoken yes/no
   confirming: (m) => {
     mic(m, { solid: false });

@@ -2,7 +2,7 @@ import { globalShortcut } from "electron";
 import { randomUUID } from "node:crypto";
 import { IPC } from "../shared/ipc.ts";
 import type { AppSettings, CommandLogEntry } from "../shared/types.ts";
-import { execute, missingSlots, readConfirmation } from "./actions/execute.ts";
+import { execute, isDismissal, missingSlots, readConfirmation } from "./actions/execute.ts";
 import { ACTIONS, type ActionKey } from "./actions/registry.ts";
 import type { ActionContext } from "./actions/types.ts";
 import { AudioPipeline, type CommandAudio, type TriggerKind } from "./audio/pipeline.ts";
@@ -136,7 +136,10 @@ function wirePipeline(p: AudioPipeline): void {
     play("wake");
     showHud();
     coordinator.setTranscript("", false);
-    coordinator.setState("listening", kind === "wake" ? "Listening…" : "Listening (hotkey)…");
+    coordinator.setState(
+      "listening",
+      kind === "wake" ? "Listening…" : kind === "hotkey" ? "Listening (hotkey)…" : "Go ahead…",
+    );
   });
 
   p.on("endpoint", () => {
@@ -147,11 +150,26 @@ function wirePipeline(p: AudioPipeline): void {
 
   p.on("cancelled", (reason) => {
     fileLog("pipeline", "cancelled", { reason });
-    // A false wake is common and must be quiet: no error tone, no scary state.
-    coordinator.setState("idle");
+    // Speech that was not addressed to us is the normal case, not an error:
+    // while armed, the agent transcribes anything it hears and simply discards
+    // what does not open with the wake phrase. It must do that silently.
+    const routine = reason === "no speech" || reason === "not addressed" || reason === "too short";
+    if (coordinator.getState() !== "conversing" || !routine) {
+      coordinator.setState(p.inFollowUp ? "conversing" : "idle");
+      coordinator.setTranscript("", false);
+      if (!p.inFollowUp) hideHud();
+    }
+    if (!routine) play("cancel");
+  });
+
+  // The wake phrase with no command after it: acknowledge and wait.
+  p.on("prompt", () => {
+    fileLog("pipeline", "prompt", {});
+    play("wake");
+    openConversation();
     coordinator.setTranscript("", false);
-    hideHud();
-    if (reason !== "no speech") play("cancel");
+    coordinator.setState("conversing", "Go ahead\u2026");
+    showHud();
   });
 
   p.on("error", (err) => {
@@ -160,6 +178,15 @@ function wirePipeline(p: AudioPipeline): void {
     coordinator.setState("error", err.message);
     log({ transcript: "", action: null, outcome: "failed", detail: err.message });
     setTimeout(() => coordinator.setState("idle"), 2500);
+  });
+
+  p.on("followUpEnded", (reason: string) => {
+    fileLog("agent", "conversation-ended", { reason });
+    if (coordinator.getState() === "conversing") {
+      coordinator.setState("idle");
+      coordinator.setTranscript("", false);
+      hideHud();
+    }
   });
 
   p.on("command", (cmd: CommandAudio) => void handleCommand(cmd));
@@ -222,6 +249,16 @@ async function handleCommand(cmd: CommandAudio): Promise<void> {
     return;
   }
 
+  // "that's it, thank you" ends the conversation. Checked here, before routing:
+  // it is instant, unambiguous, and sending it to the router would only invite
+  // it to be read as some command or other.
+  if (pipeline?.inFollowUp && isDismissal(cmd.transcript)) {
+    fileLog("agent", "dismissed", { said: cmd.transcript });
+    pipeline.closeFollowUp("dismissed");
+    finish("cancelled", cmd, null, null, "Okay", started, cmd.transcribeMs, 0, false, 0, "close");
+    return;
+  }
+
   coordinator.setState("thinking", "Working out what you meant…");
 
   let decision: RouteDecision;
@@ -251,7 +288,8 @@ async function handleCommand(cmd: CommandAudio): Promise<void> {
   // Not addressed to the agent — most likely a false wake while the user was
   // talking to someone else. Say nothing and go back to waiting.
   if (decision.addressed < 0.35) {
-    finish("cancelled", cmd, decision, null, "not addressed to the agent", started, cmd.transcribeMs, decision.ms, true);
+    // A false trigger: say nothing, and neither open nor close a conversation.
+    finish("cancelled", cmd, decision, null, "not addressed to the agent", started, cmd.transcribeMs, decision.ms, true, 0, "leave");
     return;
   }
 
@@ -282,6 +320,9 @@ async function handleCommand(cmd: CommandAudio): Promise<void> {
     coordinator.setState("confirming", `${phrase(decision.action)}? Say yes to confirm.`);
     play("confirm");
     showHud();
+    // Hold the conversation open, or answering "yes" would mean saying the wake
+    // word again first — which is absurd for a question the agent just asked.
+    openConversation(CONFIRM_WINDOW_MS);
     fileLog("route", "awaiting-confirmation", { action: decision.action });
     return;
   }
@@ -326,9 +367,11 @@ async function runAction(
     fileLog("execute", "ok", { action, args, execMs });
 
     // A couple of actions steer the agent itself rather than the OS.
+    const stops = action === "stop_listening" || action === "cancel";
     if (action === "stop_listening") stopListening();
 
-    finish("ok", cmd, decision, action, result.detail ?? phrase(action), started, cmd.transcribeMs, decision?.ms ?? 0, false, execMs);
+    finish("ok", cmd, decision, action, result.detail ?? phrase(action), started, cmd.transcribeMs,
+           decision?.ms ?? 0, false, execMs, stops ? "close" : "open");
   } catch (err) {
     fileLog("execute", "failed", { action, args, message: describe(err) });
     finish("failed", cmd, decision, action, describe(err), started, cmd.transcribeMs, decision?.ms ?? 0);
@@ -356,6 +399,13 @@ function finish(
   routeMs: number,
   silent = false,
   execMs = 0,
+  /**
+   * What to do with the conversation afterwards.
+   *  open  — keep listening for another command (the normal case)
+   *  close — the user dismissed us, or turned listening off
+   *  leave — a false trigger: do not open a window, do not close an open one
+   */
+  conversation: "open" | "close" | "leave" = "open",
 ): void {
   if (!silent) play(outcome === "ok" ? "success" : outcome === "cancelled" ? "cancel" : "error");
   coordinator.setState(outcome === "ok" ? "executing" : outcome === "failed" ? "error" : "idle", detail);
@@ -377,15 +427,32 @@ function finish(
     ...(decision?.inputTokens ? { inputTokens: decision.inputTokens } : {}),
   });
 
+  if (conversation === "open") openConversation();
+  else if (conversation === "close") pipeline?.closeFollowUp("finished");
+
   setTimeout(
     () => {
       if (coordinator.getState() === "confirming") return; // a new prompt took over
-      coordinator.setState("idle");
       coordinator.setTranscript("", false);
+      if (pipeline?.inFollowUp) {
+        // Stay visible and say so. The user needs to know the microphone is
+        // still live without having to guess.
+        coordinator.setState("conversing", "Listening — say \u201cthat\u2019s it\u201d when you\u2019re done");
+        showHud();
+        return;
+      }
+      coordinator.setState("idle");
       hideHud();
     },
     outcome === "ok" ? 1600 : 2600,
   );
+}
+
+/** Hold the conversation open so the next command needs no wake word. */
+function openConversation(windowMs?: number): void {
+  const settings = getSettings();
+  if (!settings.followUp || !pipeline) return;
+  pipeline.openFollowUp(windowMs ?? settings.followUpSeconds * 1000);
 }
 
 function log(partial: Partial<CommandLogEntry> & { transcript: string }): void {
