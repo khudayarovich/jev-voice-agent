@@ -18,6 +18,8 @@ import { AE_ERRORS, runAppleScript } from "../platform/macos/osascript.ts";
  *     self-test that actually exercises the capability.
  */
 
+export { resetGrantsIfUpdated } from "./update.ts";
+
 const IS_MAC = process.platform === "darwin";
 
 /**

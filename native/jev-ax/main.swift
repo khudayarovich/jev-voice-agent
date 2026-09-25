@@ -6,6 +6,7 @@
 //   jev-ax page                     the address of the page in front, if a browser
 //   jev-ax windows                  the windows showing on this desktop, and their apps
 //   jev-ax media --key play|next|previous   press a media key, as the keyboard's own would
+//   jev-ax request --screen         ask for Screen Recording, so the app is listed for it
 //   jev-ax tree | headings          what the window exposes, for diagnosing
 //   jev-ax --version
 //
@@ -498,6 +499,13 @@ func windowOwners() -> Never {
   emit(["ok": true, "apps": owners, "windows": windows])
 }
 
+/** Ask for Screen Recording: the prompt, and the app's row in System Settings. */
+func requestScreenAccess() -> Never {
+  let had = CGPreflightScreenCaptureAccess()
+  let granted = had || CGRequestScreenCaptureAccess()
+  emit(["ok": true, "granted": granted, "prompted": !had])
+}
+
 /**
  * Press a media key — play/pause, next, previous — the way the keyboard's own
  * keys do, so it reaches whatever is playing: Music, Spotify, a video in a
@@ -592,6 +600,9 @@ case "windows":
   windowOwners()
 case "media":
   pressMediaKey(option("--key") ?? "", dryRun: dryRun)
+case "request":
+  if args.contains("--screen") { requestScreenAccess() }
+  fail("usage", "request --screen")
 case "tree":
   tree(depth: option("--depth").flatMap { Int($0) } ?? 6)
 default:

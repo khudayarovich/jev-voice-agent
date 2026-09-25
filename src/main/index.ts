@@ -119,6 +119,10 @@ async function main(): Promise<void> {
 
   setTrayState("disabled");
 
+  // An update leaves every grant stale (see permissions/update.ts): clear them
+  // and ask again before deciding whether the app is set up.
+  await permissions.resetGrantsIfUpdated().catch((err) => log("permissions", "reset-error", { message: String(err) }));
+
   // Open Settings on first run so the user lands on the permissions and API-key
   // pane rather than wondering what the new menu-bar icon is.
   const configured = apiKeySummary().present && permissions.requiredSatisfied();
