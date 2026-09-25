@@ -1,6 +1,6 @@
 {
   "name": "jev-voice-agent",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "JVA — realtime voice control for macOS, routed by Jev (TypeSafe AI). Commands run as you finish speaking.",
   "private": true,
   "main": "dist/main/index.js",
