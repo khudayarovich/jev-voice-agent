@@ -612,6 +612,18 @@ return appName & "\\n" & winTitle`;
     }, 700);
   }
 
+  async focusInput(): Promise<boolean> {
+    const { stdout } = await exec(screenHelper(), ["input"], { timeout: 4000 }).catch(() => ({ stdout: "" }));
+    const r = stdout ? (JSON.parse(stdout) as { ok: boolean; unsure?: boolean }) : { ok: false };
+    return r.ok && !r.unsure;
+  }
+
+  async inputValue(): Promise<string | null> {
+    const { stdout } = await exec(screenHelper(), ["input", "--value"], { timeout: 3000 }).catch(() => ({ stdout: "" }));
+    const r = stdout ? (JSON.parse(stdout) as { ok: boolean; focused?: boolean; input?: boolean; value?: string }) : null;
+    return r?.ok && r.focused && r.input ? (r.value ?? "") : null;
+  }
+
   async scrollToEnd(end: "top" | "bottom"): Promise<void> {
     await this.keystroke({ key: end === "top" ? "home" : "end" });
   }

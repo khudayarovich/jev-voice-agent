@@ -374,3 +374,14 @@ test("asked which permission it needs, the agent names it", async () => {
   assert.equal((await execute("explain_last", {}, os, done)).detail, "I just did: Opened Safari");
   assert.equal((await execute("explain_last", {}, os, ctx("what happened"))).detail, "Nothing has happened yet");
 });
+
+test("a message to an app is typed into its focused input and checked before Return", async () => {
+  const { calls, os } = recorder({ waitForFrontmost: true, inputValue: "hello from jva" });
+  const r = await execute("send_to_app", {}, os, ctx("send a prompt to codex saying hello from JVA", { installedApps: ["Codex", "Safari"] }));
+  assert.deepEqual(calls.map((c) => c.method), ["openApp", "waitForFrontmost", "focusInput", "typeText", "inputValue", "keystroke"]);
+  assert.equal(r.detail, "Sent to Codex: “hello from JVA”");
+  // The text never arrived: said so, and Return never pressed.
+  const { calls: c2, os: os2 } = recorder({ waitForFrontmost: true, inputValue: "" });
+  await assert.rejects(execute("send_to_app", {}, os2, ctx("tell codex to run the build", { installedApps: ["Codex"] })), /Couldn't get the text into Codex/);
+  assert.ok(!c2.some((c) => c.method === "keystroke"));
+});

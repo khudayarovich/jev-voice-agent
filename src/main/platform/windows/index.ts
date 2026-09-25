@@ -102,6 +102,8 @@ export class WindowsPlatform implements PlatformAdapter {
 
   keystroke(_combo: KeyCombo): Promise<void> { this.nope("Synthetic keystrokes"); }
   typeText(): Promise<void> { this.nope("Typing text"); }
+  focusInput(): Promise<boolean> { return Promise.resolve(false); }
+  inputValue(): Promise<string | null> { return Promise.resolve(null); }
   scroll(): Promise<void> { this.nope("Scrolling"); }
   scrollToEnd(): Promise<void> { this.nope("Scrolling"); }
   openFolder(): Promise<void> { this.nope("Opening folders"); }

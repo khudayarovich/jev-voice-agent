@@ -7,6 +7,8 @@
 //   jev-ax windows                  the windows showing on this desktop, and their apps
 //   jev-ax media --key play|next|previous   press a media key, as the keyboard's own would
 //   jev-ax request --screen         ask for Screen Recording, so the app is listed for it
+//   jev-ax input                    put the keyboard focus in the window's text input
+//   jev-ax input --value            what the focused element holds, to check typed text landed
 //   jev-ax tree | headings          what the window exposes, for diagnosing
 //   jev-ax --version
 //
@@ -499,6 +501,80 @@ func windowOwners() -> Never {
   emit(["ok": true, "apps": owners, "windows": windows])
 }
 
+// MARK: - Text inputs
+
+let INPUT_ROLES: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
+
+func focusedElement(_ app: AXUIElement) -> AXUIElement? {
+  guard let value = attribute(app, kAXFocusedUIElementAttribute as String) else { return nil }
+  return (value as! AXUIElement)
+}
+
+func isTextInput(_ element: AXUIElement) -> Bool {
+  INPUT_ROLES.contains(role(element))
+}
+
+/** The window's text inputs in reading order; a chat's composer is usually the last. */
+func textInputs(in window: AXUIElement, budget: Int = 6000) -> [AXUIElement] {
+  var queue: [AXUIElement] = [window]
+  var out: [AXUIElement] = []
+  var visited = 0
+  while !queue.isEmpty, visited < budget {
+    let element = queue.removeFirst()
+    visited += 1
+    if isTextInput(element) { out.append(element) }
+    queue.append(contentsOf: children(element))
+  }
+  return out
+}
+
+/**
+ * Put the keyboard focus in the window's text input. Typing into a window
+ * that has just come forward went nowhere when nothing in it had the focus:
+ * observed in real use, a prompt "sent" to OpenCode never appeared.
+ */
+func focusInput() -> Never {
+  let (app, window, _) = focusedWindow()
+  if let current = focusedElement(app), isTextInput(current) {
+    emit(["ok": true, "role": role(current), "already": true])
+  }
+  // An Electron app builds its page's tree only once asked, and slowly.
+  _ = page(in: window, app: app)
+  let inputs = textInputs(in: window)
+  guard let target = inputs.last else { fail("not-found", "No text input in this window.") }
+  AXUIElementSetAttributeValue(target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+  usleep(100_000)
+  if let now = focusedElement(app), CFEqual(now, target) { emit(["ok": true, "role": role(target)]) }
+  // Not focusable that way: a click in the middle of it, into the app in front.
+  var owner: pid_t = 0
+  AXUIElementGetPid(target, &owner)
+  guard owner == NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+    fail("not-pressable", "The input cannot be clicked while its app is behind another.")
+  }
+  _ = AXUIElementPerformAction(target, "AXScrollToVisible" as CFString)
+  var origin = CGPoint.zero
+  var size = CGSize.zero
+  if let p = attribute(target, kAXPositionAttribute as String) { AXValueGetValue(p as! AXValue, .cgPoint, &origin) }
+  if let s = attribute(target, kAXSizeAttribute as String) { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+  guard size.width > 0, size.height > 0 else { fail("not-pressable", "The input cannot be clicked.") }
+  let point = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+  for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    usleep(30_000)
+  }
+  usleep(150_000)
+  if let now = focusedElement(app), isTextInput(now) { emit(["ok": true, "role": role(now), "clicked": true]) }
+  emit(["ok": true, "role": role(target), "clicked": true, "unsure": true])
+}
+
+/** What the focused element holds, for checking that typed text landed. */
+func inputValue() -> Never {
+  let (app, _, _) = focusedWindow()
+  guard let current = focusedElement(app) else { emit(["ok": true, "focused": false]) }
+  let value = (attribute(current, kAXValueAttribute as String) as? String) ?? ""
+  emit(["ok": true, "focused": true, "role": role(current), "input": isTextInput(current), "value": String(value.suffix(400))])
+}
+
 /** Ask for Screen Recording: the prompt, and the app's row in System Settings. */
 func requestScreenAccess() -> Never {
   let had = CGPreflightScreenCaptureAccess()
@@ -552,7 +628,8 @@ func headings() -> Never {
 
 /** The window's tree, a few levels deep: for diagnosing an app that exposes little. */
 func tree(depth maxDepth: Int) -> Never {
-  let (_, window, appName) = focusedWindow()
+  let (app, window, appName) = focusedWindow()
+  _ = page(in: window, app: app)
   var lines: [String] = ["\(appName)"]
   func walk(_ element: AXUIElement, _ depth: Int) {
     guard depth <= maxDepth, lines.count < 400 else { return }
@@ -600,6 +677,9 @@ case "windows":
   windowOwners()
 case "media":
   pressMediaKey(option("--key") ?? "", dryRun: dryRun)
+case "input":
+  if args.contains("--value") { inputValue() }
+  focusInput()
 case "request":
   if args.contains("--screen") { requestScreenAccess() }
   fail("usage", "request --screen")

@@ -124,6 +124,10 @@ export interface PlatformAdapter {
   // --- input -------------------------------------------------------------
   keystroke(combo: KeyCombo): Promise<void>;
   typeText(text: string): Promise<void>;
+  /** Put the keyboard focus in the front window's text input. False when it has none. */
+  focusInput(): Promise<boolean>;
+  /** What the focused text input holds; null when nothing readable has the focus. */
+  inputValue(): Promise<string | null>;
   scroll(direction: "up" | "down", amount: number): Promise<void>;
   /** To the very top or bottom of what is in front. */
   scrollToEnd(end: "top" | "bottom"): Promise<void>;

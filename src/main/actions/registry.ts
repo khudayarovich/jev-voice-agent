@@ -107,6 +107,24 @@ export function explainLast(ctx: ActionContext): string {
   return `That didn't work: ${last.detail}`;
 }
 
+/**
+ * Type into the front window's input and confirm the text is there: true
+ * when it is, false when it plainly is not, null when that cannot be read.
+ * A first miss gets one more try after the input is focused by force.
+ */
+async function typeChecked(os: PlatformAdapter, text: string): Promise<boolean | null> {
+  const snippet = text.slice(0, 40).toLowerCase();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await os.focusInput().catch(() => false);
+    await os.typeText(text);
+    await new Promise((r) => setTimeout(r, 300));
+    const value = await os.inputValue().catch(() => null);
+    if (typeof value !== "string") return null;
+    if (value.toLowerCase().includes(snippet)) return true;
+  }
+  return false;
+}
+
 /** The apps the user can see, the one in front first — and never this one. */
 function appsOnScreen(ctx: ActionContext): string[] {
   const shown = ctx.windowedApps?.length ? ctx.windowedApps : ctx.runningApps;
@@ -985,12 +1003,16 @@ export const ACTIONS = {
       if (!target) throw new Error("Say which app to send it to");
       await os.openApp(target);
       if (!(await os.waitForFrontmost((a) => a === target, 4000))) throw new Error(`${target} did not come to the front`);
-      // A moment for its input field to take focus after coming forward.
-      await new Promise((r) => setTimeout(r, 500));
-      await os.typeText(text);
+      // A moment for the window to settle; then the focus goes into its text
+      // input, and the text is checked for before Return is pressed —
+      // observed in real use, a prompt "sent" to OpenCode never appeared.
+      await new Promise((r) => setTimeout(r, 400));
+      const landed = await typeChecked(os, text);
+      if (landed === false) throw new Error(`Couldn't get the text into ${target}'s input`);
       await new Promise((r) => setTimeout(r, 150));
       await os.keystroke({ key: "return" });
-      return { detail: `Sent to ${target}: “${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`, app: target };
+      const shown = `“${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`;
+      return { detail: landed ? `Sent to ${target}: ${shown}` : `Typed ${shown} into ${target} and pressed Return — couldn't confirm it landed`, app: target };
     },
   }),
 
