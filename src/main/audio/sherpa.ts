@@ -61,8 +61,15 @@ export function loadSherpa(): SherpaModule | null {
   }
 }
 
+/**
+ * The small models that ship with the app: voice activity and the wake word.
+ *
+ * Installed, they sit in Resources, outside the asar archive — native code
+ * opens them with plain file I/O and cannot see inside the archive.
+ */
 export function modelDir(...parts: string[]): string {
-  return path.join(app.getAppPath(), "resources", "models", ...parts);
+  const root = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), "resources");
+  return path.join(root, "models", ...parts);
 }
 
 export const KWS_MODEL_DIR = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01";

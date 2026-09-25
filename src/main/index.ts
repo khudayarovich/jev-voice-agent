@@ -1,9 +1,10 @@
-import { BrowserWindow, app, ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import { readFile } from "node:fs/promises";
 import { IPC } from "../shared/ipc.ts";
 import type { AppSettings, PermissionId } from "../shared/types.ts";
 import { ACTIONS, ACTION_KEYS } from "./actions/registry.ts";
-import { catalogue, downloadModel } from "./audio/download.ts";
+import { catalogue, downloadModel, isInstalled } from "./audio/download.ts";
+import { modelById } from "./audio/models.ts";
 import { applySettings, getPipeline, shutdown, startListening, stopListening } from "./agent.ts";
 import { platform } from "./platform/index.ts";
 import { coordinator } from "./coordinator.ts";
@@ -18,11 +19,21 @@ import {
 } from "./settings-store.ts";
 import { createTray, destroyTray, hideDock, refreshTrayMenu, setTrayState } from "./tray.ts";
 import { resource } from "./paths.ts";
-import { createHud, getHud, getSettingsWindow, openSettings } from "./windows.ts";
+import { selfTest } from "./self-test.ts";
+import { broadcast, createHud, getHud, getSettingsWindow, openSettings } from "./windows.ts";
 
-// A menu-bar agent must never run twice: two trays, two hotkey registrations,
-// two microphone consumers.
-if (!app.requestSingleInstanceLock()) {
+// `--self-test` checks the native pieces and exits; see self-test.ts.
+if (process.argv.includes("--self-test")) {
+  void app.whenReady().then(async () => {
+    const ok = await selfTest().catch((err: unknown) => {
+      console.error("self-test crashed:", err);
+      return false;
+    });
+    app.exit(ok ? 0 : 1);
+  });
+} else if (!app.requestSingleInstanceLock()) {
+  // A menu-bar agent must never run twice: two trays, two hotkey
+  // registrations, two microphone consumers.
   app.quit();
 } else {
   app.on("second-instance", () => openSettings());
@@ -80,6 +91,15 @@ async function main(): Promise<void> {
   createHud();
   registerIpc();
 
+  // An installed copy starts with no speech model. Fetch it now, in the
+  // background, so it is ready by the time the user has pasted a key and
+  // granted permissions; starting to listen joins this same download.
+  const wanted = modelById(getSettings().sttModel);
+  if (app.isPackaged && !isInstalled(wanted)) {
+    log("app", "model-download", { model: wanted.id });
+    void downloadModel(wanted.id, (p) => broadcast(IPC.sttDownloadProgress, p));
+  }
+
   // Fan coordinator changes out to the tray and every open renderer.
   coordinator.on("state", (state) => {
     setTrayState(state);
@@ -107,12 +127,6 @@ async function main(): Promise<void> {
   if (getSettings().listenOnStart) {
     log("app", "auto-start", {});
     void startListening();
-  }
-}
-
-function broadcast(channel: string, payload: unknown): void {
-  for (const w of BrowserWindow.getAllWindows()) {
-    if (!w.isDestroyed()) w.webContents.send(channel, payload);
   }
 }
 

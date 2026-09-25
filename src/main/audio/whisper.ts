@@ -53,14 +53,12 @@ export interface SpeechEngine {
   setVocabulary?(prompt: string): void;
 }
 
-function binaryPath(): string {
-  const candidates = [
-    // Bundled with a packaged build.
-    path.join(process.resourcesPath ?? "", "whisper", "whisper-server"),
-    // Development: built into vendor/ by `npm run setup`
-    path.join(app.getAppPath(), "vendor", "whisper.cpp", "build", "bin", "whisper-server"),
-  ];
-  return candidates.find((p) => p && existsSync(p)) ?? candidates[1]!;
+export function binaryPath(): string {
+  // The installed app carries its own self-contained build in Resources; a
+  // development checkout uses the one `npm run setup` built into vendor/.
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "whisper", "whisper-server")
+    : path.join(app.getAppPath(), "vendor", "whisper.cpp", "build", "bin", "whisper-server");
 }
 
 /**
@@ -92,8 +90,17 @@ function reapStale(): void {
   }
 }
 
+/**
+ * Where speech models live.
+ *
+ * Installed, they are downloaded into Application Support: the app bundle is
+ * read-only (and signed — writing into it would break the signature), and at
+ * ~500 MB a model is too big to ship inside the download anyway.
+ */
 export function modelsDir(): string {
-  return path.join(app.getAppPath(), "resources", "models");
+  return app.isPackaged
+    ? path.join(app.getPath("userData"), "models")
+    : path.join(app.getAppPath(), "resources", "models");
 }
 
 function modelPath(modelId: string): string {
@@ -171,9 +178,15 @@ export class WhisperEngine implements SpeechEngine {
   private async doStart(): Promise<void> {
     const bin = binaryPath();
     const model = modelPath(this.modelId);
-    if (!existsSync(bin)) throw new Error(`whisper-server not found at ${bin}. Run \`npm run setup\` first.`);
+    if (!existsSync(bin)) {
+      throw new Error(
+        app.isPackaged
+          ? "The speech engine is missing from the app. Reinstall Jev Voice Agent."
+          : `whisper-server not found at ${bin}. Run \`npm run setup\` first.`,
+      );
+    }
     if (!existsSync(model)) {
-      throw new Error(`Speech model not found at ${model}. Run \`npm run setup\`, or download it in Settings → Voice.`);
+      throw new Error("The speech model is not downloaded yet. Download it in Settings → Voice.");
     }
 
     reapStale();

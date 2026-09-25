@@ -8,7 +8,8 @@
 #
 #   npm run setup                         # everything, with small.en
 #   npm run setup -- --model base.en      # a different speech model
-#   npm run setup -- --only kws           # one piece: whisper | model | vad | kws
+#   npm run setup -- --only kws           # just some: whisper, model, vad, kws, portable
+#   npm run setup -- --only portable,vad  # (comma-separated; portable is what `npm run dist` ships)
 #
 # Safe to run again: anything already in place is left alone. Other speech
 # models can also be downloaded later from Settings → Voice.
@@ -39,13 +40,18 @@ case "$MODEL" in
   *) echo "Unknown model: $MODEL (choose base.en, small.en or large-v3-turbo-q5)" >&2; exit 2 ;;
 esac
 
-case "$ONLY" in
-  "" | whisper | model | vad | kws) ;;
-  *) echo "Unknown piece: $ONLY (choose whisper, model, vad or kws)" >&2; exit 2 ;;
-esac
+for piece in ${ONLY//,/ }; do
+  case "$piece" in
+    whisper | model | vad | kws | portable) ;;
+    *) echo "Unknown piece: $piece (choose whisper, model, vad, kws or portable)" >&2; exit 2 ;;
+  esac
+done
 
 step() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
-want() { [[ -z "$ONLY" || "$ONLY" == "$1" ]]; }
+# Everything by default; with --only, just the pieces named. The portable
+# server is only ever built on request: development never needs it.
+want() { [[ -z "$ONLY" || ",$ONLY," == *",$1,"* ]]; }
+asked() { [[ ",$ONLY," == *",$1,"* ]]; }
 
 # Download through a temporary file, so an interrupted download never looks
 # like an installed one.
@@ -61,23 +67,46 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+# Build whisper-server into "$WHISPER/$1", with any extra CMake flags after it.
+build_server() {
+  local dir="$1"
+  shift
+  command -v cmake >/dev/null || { echo "CMake is needed to build whisper.cpp: brew install cmake" >&2; exit 1; }
+  xcode-select -p >/dev/null 2>&1 || { echo "The Xcode command line tools are needed: xcode-select --install" >&2; exit 1; }
+  if [[ ! -d "$WHISPER/.git" ]]; then
+    step "Fetching whisper.cpp $WHISPER_TAG"
+    git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$WHISPER_TAG" \
+      https://github.com/ggml-org/whisper.cpp "$WHISPER"
+  fi
+  # Apple's clang has no OpenMP; whisper.cpp's own thread pool is what runs.
+  cmake -S "$WHISPER" -B "$WHISPER/$dir" -Wno-dev -Wno-deprecated \
+    -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DGGML_OPENMP=OFF "$@" >/dev/null
+  cmake --build "$WHISPER/$dir" --config Release --target whisper-server -j "$(sysctl -n hw.ncpu)" >/dev/null
+  step "Built $WHISPER/$dir/bin/whisper-server"
+}
+
 if want whisper; then
   if [[ -x "$WHISPER/build/bin/whisper-server" ]]; then
     step "whisper-server is already built"
   else
-    command -v cmake >/dev/null || { echo "CMake is needed to build whisper.cpp: brew install cmake" >&2; exit 1; }
-    xcode-select -p >/dev/null 2>&1 || { echo "The Xcode command line tools are needed: xcode-select --install" >&2; exit 1; }
-    if [[ ! -d "$WHISPER/.git" ]]; then
-      step "Fetching whisper.cpp $WHISPER_TAG"
-      git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$WHISPER_TAG" \
-        https://github.com/ggml-org/whisper.cpp "$WHISPER"
-    fi
     step "Building whisper-server with Metal (a minute or two)"
-    # Apple's clang has no OpenMP; whisper.cpp's own thread pool is what runs.
-    cmake -S "$WHISPER" -B "$WHISPER/build" -Wno-dev -Wno-deprecated \
-      -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DGGML_OPENMP=OFF >/dev/null
-    cmake --build "$WHISPER/build" --config Release --target whisper-server -j "$(sysctl -n hw.ncpu)" >/dev/null
-    step "Built $WHISPER/build/bin/whisper-server"
+    build_server build
+  fi
+fi
+
+# The copy that ships inside the app. The development build links six
+# libraries by an absolute path on this disk and tunes its CPU code to this
+# exact chip; this one links nothing but the system, embeds its Metal shaders,
+# and runs on any Apple Silicon Mac.
+if asked portable; then
+  if [[ -x "$WHISPER/build-portable/bin/whisper-server" ]]; then
+    step "Portable whisper-server is already built"
+  else
+    step "Building the portable whisper-server for the app bundle"
+    # macOS 14 is the app's floor: the sherpa-onnx addon needs it. Without an
+    # explicit target the binary is stamped with whatever macOS built it.
+    build_server build-portable -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_METAL_EMBED_LIBRARY=ON \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
   fi
 fi
 

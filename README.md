@@ -12,10 +12,42 @@ note"*, Notes opens **before you have finished the sentence**. Feedback is a
 small overlay under the menu bar and short indicator tones; there is no talking
 assistant.
 
-## Getting started
+## Install
 
-You need a Mac (Apple Silicon recommended), [Node.js](https://nodejs.org) 22 or
-later, and the Xcode command line tools and CMake to build the speech engine:
+Download **`JevVoiceAgent-<version>-arm64.dmg`** from
+[Releases](https://github.com/khudayarovich/jev-voice-agent/releases), open it,
+and drag **Jev Voice Agent** into Applications. It needs an Apple Silicon Mac
+with macOS 14 or later.
+
+The first time, macOS will not open it, because the build is not notarized by
+Apple (that takes a paid developer account). Allow it once: try to open the app,
+then go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
+It lives in the menu bar. On first launch Settings opens, and the speech model
+(~500 MB) starts downloading in the background while you do two things:
+
+1. **Connection** — paste a [TypeSafe](https://typesafe.ai) API key for Jev.
+   Without one, a local matcher still handles the common commands, just more
+   bluntly.
+2. **Permissions** — grant Microphone and Accessibility. macOS asks for
+   Automation separately, per app, the first time a command needs it.
+
+Then say *"Hey Jeff, open Safari"*. Or *"Hey Jeff, set the volume to thirty
+percent"*, *"take a screenshot"*, *"open Notes and create a new note"*. Keep
+talking after the first command — no wake word needed until you say "that's it".
+The full list is under Settings → Commands.
+
+If something seems off, this checks every part of the install without touching
+the microphone:
+
+```bash
+"/Applications/Jev Voice Agent.app/Contents/MacOS/Jev Voice Agent" --self-test
+```
+
+## Run from source
+
+You need [Node.js](https://nodejs.org) 22 or later, and the Xcode command line
+tools and CMake to build the speech engine:
 
 ```bash
 xcode-select --install     # if you do not have them yet
@@ -32,18 +64,10 @@ npm run setup    # builds whisper.cpp and downloads the models (~500 MB, once)
 npm start
 ```
 
-On first launch Settings opens. Two things to do there:
-
-1. **Connection** — paste a [TypeSafe](https://typesafe.ai) API key for Jev.
-   Without one, a local matcher still handles the common commands, just more
-   bluntly.
-2. **Permissions** — grant Microphone and Accessibility. macOS asks for
-   Automation separately, per app, the first time a command needs it.
-
-Then say *"Hey Jeff, open Safari"*. Or *"Hey Jeff, set the volume to thirty
-percent"*, *"take a screenshot"*, *"open Notes and create a new note"*. Keep
-talking after the first command — no wake word needed until you say "that's it".
-The full list is under Settings → Commands.
+To build the installer yourself, `npm run dist` produces
+`release/JevVoiceAgent-<version>-arm64.dmg`, with a self-contained speech engine
+built for any Apple Silicon Mac. Set `CSC_NAME` to a Developer ID certificate to
+sign it properly; otherwise it is signed ad hoc.
 
 ## How it works
 
@@ -122,6 +146,7 @@ That is both why it is fast (70–500 ms, ~0.003¢ per command) and why it is sa
 - [x] **Phase 3** — wake word, VAD endpointing, auto-gain
 - [x] **Phase 4** — Jev routing, typed executor, confirmations
 - [x] **Realtime** — streaming transcription, acting at the pause, chains mid-sentence
+- [x] **Installable app** — a DMG with a self-contained speech engine; the model downloads on first run
 - [ ] **Phase 5** — wider registry, native helper for hold-to-talk
 - [ ] **Phase 6** — Apple SpeechAnalyzer engine, notarization
 

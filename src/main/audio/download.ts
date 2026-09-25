@@ -27,22 +27,48 @@ export function catalogue(): (SttModel & { installed: boolean })[] {
   return STT_MODELS.map((m) => ({ ...m, installed: isInstalled(m) }));
 }
 
-const inFlight = new Map<string, AbortController>();
+/**
+ * Downloads in progress. Everyone who asks for the same model shares one
+ * download and hears its progress: the Settings window and the agent's own
+ * first-run fetch can both be waiting on it, and a second request must wait
+ * for the first rather than return early with nothing on disk.
+ */
+const inFlight = new Map<
+  string,
+  { promise: Promise<void>; listeners: Set<(p: ModelDownloadProgress) => void>; controller: AbortController }
+>();
 
-export async function downloadModel(
+export function downloadModel(
   id: string,
   onProgress: (p: ModelDownloadProgress) => void,
 ): Promise<void> {
   const model = modelById(id);
   if (isInstalled(model)) {
     onProgress({ id, receivedBytes: model.bytes, totalBytes: model.bytes, done: true });
-    return;
+    return Promise.resolve();
   }
-  if (inFlight.has(id)) return; // already going
+  const running = inFlight.get(id);
+  if (running) {
+    running.listeners.add(onProgress);
+    return running.promise;
+  }
 
+  const listeners = new Set([onProgress]);
+  const report = (p: ModelDownloadProgress) => {
+    for (const fn of listeners) fn(p);
+  };
   const controller = new AbortController();
-  inFlight.set(id, controller);
+  const promise = fetchModel(model, controller, report).finally(() => inFlight.delete(id));
+  inFlight.set(id, { promise, listeners, controller });
+  return promise;
+}
 
+async function fetchModel(
+  model: SttModel,
+  controller: AbortController,
+  report: (p: ModelDownloadProgress) => void,
+): Promise<void> {
+  const { id } = model;
   const dir = modelsDir();
   mkdirSync(dir, { recursive: true });
   const target = path.join(dir, model.file);
@@ -63,28 +89,25 @@ export async function downloadModel(
       const now = Date.now();
       if (now - lastReport > 250) {
         lastReport = now;
-        onProgress({ id, receivedBytes, totalBytes, done: false });
+        report({ id, receivedBytes, totalBytes, done: false });
       }
     });
 
     await pipeline(source, createWriteStream(temp));
     renameSync(temp, target);
-    onProgress({ id, receivedBytes: totalBytes, totalBytes, done: true });
+    report({ id, receivedBytes: totalBytes, totalBytes, done: true });
   } catch (err) {
     rmSync(temp, { force: true });
-    onProgress({
+    report({
       id,
       receivedBytes: 0,
       totalBytes: model.bytes,
       done: true,
       error: err instanceof Error ? err.message : String(err),
     });
-  } finally {
-    inFlight.delete(id);
   }
 }
 
 export function cancelDownload(id: string): void {
-  inFlight.get(id)?.abort();
-  inFlight.delete(id);
+  inFlight.get(id)?.controller.abort();
 }

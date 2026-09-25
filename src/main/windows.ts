@@ -181,6 +181,13 @@ export function createCapture(): BrowserWindow {
   return captureWin;
 }
 
+/** Send to every open window: Settings, the overlay, the capture host. */
+export function broadcast(channel: string, payload: unknown): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send(channel, payload);
+  }
+}
+
 export function getCapture(): BrowserWindow | null {
   return captureWin && !captureWin.isDestroyed() ? captureWin : null;
 }

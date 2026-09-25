@@ -14,6 +14,8 @@ import {
 import { ACTIONS, type ActionKey } from "./actions/registry.ts";
 import { clauseTail, splitCommands } from "./actions/split.ts";
 import type { ActionContext } from "./actions/types.ts";
+import { downloadModel, isInstalled } from "./audio/download.ts";
+import { modelById } from "./audio/models.ts";
 import { AudioPipeline, type TriggerKind, type Utterance, VAD_HANGOVER_MS } from "./audio/pipeline.ts";
 import { Vad } from "./audio/vad.ts";
 import { buildVocabularyPrompt } from "./audio/vocabulary.ts";
@@ -26,7 +28,7 @@ import { type RouteDecision, route } from "./jev/router.ts";
 import { log as fileLog } from "./log.ts";
 import { platform } from "./platform/index.ts";
 import { getSettings } from "./settings-store.ts";
-import { createCapture, getCapture, hideHud, showHud } from "./windows.ts";
+import { broadcast, createCapture, getCapture, hideHud, showHud } from "./windows.ts";
 
 /**
  * Owns the listening lifecycle — the speech engine, the pipeline, the hotkey —
@@ -74,6 +76,7 @@ async function doStart(): Promise<void> {
       speech.stop();
       speech = null;
     }
+    await ensureModel(settings.sttModel);
     if (!speech) speech = new WhisperEngine(settings.sttModel);
     // This also forces the one-time Metal shader compile, which takes ~17 s on a
     // cold machine. Far better to pay it here than on the first spoken command.
@@ -148,6 +151,27 @@ export function applySettings(next: AppSettings): void {
     return;
   }
   if (next.hotkey !== registeredHotkey && pipeline?.listening) registerHotkey(next.hotkey);
+}
+
+/**
+ * A fresh install has no speech model yet: fetch it now, visibly, rather than
+ * fail. If the app already started the download at launch this joins it.
+ */
+async function ensureModel(id: string): Promise<void> {
+  const model = modelById(id);
+  if (isInstalled(model)) return;
+  fileLog("agent", "model-download", { model: id });
+  showHud();
+  await downloadModel(id, (p) => {
+    broadcast(IPC.sttDownloadProgress, p);
+    if (p.done || !p.totalBytes) return;
+    const pct = Math.round((p.receivedBytes / p.totalBytes) * 100);
+    coordinator.setState("thinking", `Downloading the ${model.label} speech model… ${pct}%`);
+  });
+  hideHud();
+  if (!isInstalled(model)) {
+    throw new Error(`Could not download the ${model.label} speech model. Check your connection and try again.`);
+  }
 }
 
 /** Seed the recogniser with the apps actually installed on this Mac. */

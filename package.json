@@ -27,7 +27,7 @@
     "dev": "node scripts/build.mjs --watch",
     "start": "npm run build && electron .",
     "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
-    "dist": "npm run build && electron-builder",
+    "dist": "bash scripts/setup.sh --only portable,vad,kws && npm run build && electron-builder --mac --arm64",
     "tail": "tail -f \"$HOME/Library/Application Support/jev-voice-agent/jev.log\"",
     "calibrate": "node --experimental-strip-types scripts/calibrate.mjs",
     "bench": "node scripts/bench.mjs"
@@ -46,21 +46,63 @@
   "build": {
     "appId": "ai.jev.voiceagent",
     "productName": "Jev Voice Agent",
+    "copyright": "© 2026 Farrukh Khudayarovich Yuldashev",
+    "artifactName": "JevVoiceAgent-${version}-${arch}.${ext}",
     "directories": {
       "output": "release",
       "buildResources": "build"
     },
     "files": [
-      "dist/**/*",
-      "resources/**/*",
+      "dist/main/**/*",
+      "dist/preload/**/*",
+      "dist/renderer/**/*",
+      "resources/icons/**/*",
+      "resources/earcons/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "vendor/whisper.cpp/build-portable/bin/whisper-server",
+        "to": "whisper/whisper-server"
+      },
+      {
+        "from": "resources/models/silero_vad.onnx",
+        "to": "models/silero_vad.onnx"
+      },
+      {
+        "from": "resources/models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01",
+        "to": "models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01",
+        "filter": [
+          "encoder-epoch-12-avg-2-chunk-16-left-64.onnx",
+          "decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
+          "joiner-epoch-12-avg-2-chunk-16-left-64.onnx",
+          "tokens.txt",
+          "bpe.model"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/sherpa-onnx-darwin-arm64/**"
+    ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
+      "minimumSystemVersion": "14.0",
+      "identity": "-",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -72,10 +114,8 @@
         "NSSpeechRecognitionUsageDescription": "Jev Voice Agent can use Apple's on-device speech recognition to transcribe your commands."
       }
     },
-    "win": {
-      "target": [
-        "nsis"
-      ]
+    "dmg": {
+      "title": "Jev Voice Agent ${version}"
     }
   }
 }

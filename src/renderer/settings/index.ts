@@ -218,14 +218,21 @@ async function renderModels(): Promise<void> {
 }
 
 window.jev.stt.onProgress(async (p: ModelDownloadProgress) => {
+  const pctDone = p.totalBytes ? (p.receivedBytes / p.totalBytes) * 100 : 0;
+  // Shown in the sidebar too: on a fresh install this download starts on its
+  // own, while the user is still on the Connection tab.
+  downloading = p.done ? "" : `Downloading speech model ${Math.round(pctDone)}%`;
+  paintState(agentState);
+
   const row = document.querySelector<HTMLElement>(`.model[data-model="${p.id}"]`);
   if (!row) return;
   const meta = row.querySelector(".model-meta") as HTMLElement;
+  const bar = row.querySelector(".model-bar") as HTMLElement;
   const fill = row.querySelector(".model-bar > i") as HTMLElement;
 
   if (p.error) {
     meta.textContent = `download failed — ${p.error}`;
-    (row.querySelector(".model-bar") as HTMLElement).hidden = true;
+    bar.hidden = true;
     return;
   }
   if (p.done) {
@@ -234,7 +241,7 @@ window.jev.stt.onProgress(async (p: ModelDownloadProgress) => {
     await renderModels();
     return;
   }
-  const pctDone = p.totalBytes ? (p.receivedBytes / p.totalBytes) * 100 : 0;
+  bar.hidden = false;
   fill.style.width = `${pctDone}%`;
   meta.textContent = `downloading ${Math.round(pctDone)}%`;
 });
@@ -558,9 +565,14 @@ const STATE_TEXT: Record<AgentState, string> = {
   error: "Error",
 };
 
+/** The agent's last known state, and any model download under way. */
+let agentState: AgentState = "disabled";
+let downloading = "";
+
 function paintState(state: AgentState): void {
+  agentState = state;
   $("brandDot").className = `brand-dot ${state}`;
-  $("brandState").textContent = STATE_TEXT[state];
+  $("brandState").textContent = downloading || STATE_TEXT[state];
   $<HTMLInputElement>("listeningToggle").checked = state !== "disabled";
 }
 
