@@ -115,7 +115,9 @@ export function actsEarly(d: RouteDecision, clause: string, confidenceThreshold:
   if (d.confidence < confidenceThreshold) return false;
   if (d.slotConfidence !== undefined && d.slotConfidence < SLOT_CONFIDENCE_MIN) return false;
   if (missingSlots(d.action, d.args).length > 0) return false;
-  if (TEXT_PAYLOAD.has(d.action)) return false;
+  // Dictation, a search, and what to click: a pause inside the words ("click
+  // on sign… in with Google") is not the end of them.
+  if (TEXT_PAYLOAD.has(d.action) || d.action === "click_on") return false;
   return !isIncomplete(clause);
 }
 

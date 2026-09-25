@@ -6,6 +6,7 @@ import { modelById } from "./audio/models.ts";
 import { Vad } from "./audio/vad.ts";
 import { WakeWord } from "./audio/wake.ts";
 import { WhisperEngine, binaryPath } from "./audio/whisper.ts";
+import { screenHelper } from "./platform/macos/index.ts";
 import { getSettings } from "./settings-store.ts";
 
 const exec = promisify(execFile);
@@ -35,6 +36,14 @@ export async function selfTest(): Promise<boolean> {
     if (!existsSync(bin)) throw new Error(`missing: ${bin}`);
     // --help loads the binary and everything it links, then exits.
     await exec(bin, ["--help"], { timeout: 10_000 });
+    return bin;
+  });
+
+  await check("clicking helper", async () => {
+    const bin = screenHelper();
+    if (!existsSync(bin)) throw new Error(`missing: ${bin}`);
+    const { stdout } = await exec(bin, ["--version"], { timeout: 10_000 });
+    if (!(JSON.parse(stdout) as { ok?: boolean }).ok) throw new Error(stdout.trim());
     return bin;
   });
 

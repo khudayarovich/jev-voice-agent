@@ -129,3 +129,15 @@ test("knows 'the browser' from a browser by name", () => {
   assert.ok(!refersToBrowser("open the chrome browser"));
   assert.ok(!refersToBrowser("open safari"));
 });
+
+test("a browser with a window showing beats one that is only running", () => {
+  // Safari is often running with no window at all. With Chrome's window on
+  // screen, "the browser" is Chrome — even though Safari is the default.
+  const c = ctx("open the browser", {
+    runningApps: ["Finder", "Safari", "Google Chrome"],
+    windowedApps: ["Finder", "Google Chrome"],
+  });
+  assert.equal(pickBrowser(c), "Google Chrome");
+  // Neither showing a window: the default, as before.
+  assert.equal(pickBrowser({ ...c, windowedApps: ["Finder"] }), null);
+});

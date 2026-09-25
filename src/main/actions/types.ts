@@ -17,6 +17,8 @@ export interface ActionContext {
   focusedApp: string;
   windowTitle: string;
   runningApps: string[];
+  /** Running apps with a window showing; undefined when that is not known. */
+  windowedApps?: string[];
   installedApps: string[];
   automations: string[];
   /** The browser links open in by default, per LaunchServices. */
@@ -30,6 +32,11 @@ export interface ActionContext {
   lastBrowser?: string;
   /** What was just done in this conversation, oldest first: "Opened Safari". */
   recent?: string[];
+  /**
+   * The page this conversation last opened in a browser. While the browser
+   * still shows it, the next page may replace it rather than open a new tab.
+   */
+  lastPage?: string;
 }
 
 /**
@@ -94,6 +101,8 @@ export interface ActionResult {
    * app that was opened. Remembered, so the next command uses it too.
    */
   app?: string;
+  /** The page it opened, for a browser action. Remembered, like `app`. */
+  page?: string;
 }
 
 export interface ActionDef<S extends Slots = Slots> {
@@ -106,6 +115,11 @@ export interface ActionDef<S extends Slots = Slots> {
    * destroy work or state: emptying the Trash, shutting down, quitting.
    */
   destructive?: boolean;
+  /**
+   * Requires the spoken confirmation only for some values: clicking "Delete"
+   * asks first, clicking "Images" does not.
+   */
+  confirmIf?(args: SlotValues<S>): boolean;
   slots: S;
   run(args: SlotValues<S>, os: PlatformAdapter, ctx: ActionContext): Promise<ActionResult | void>;
 }

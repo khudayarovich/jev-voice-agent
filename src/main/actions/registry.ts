@@ -1,5 +1,6 @@
 import type { PlatformAdapter } from "../platform/types.ts";
 import { expandApps, listNames, pickBrowser, withoutBrowser } from "./apps.ts";
+import { chooseTab, clickTarget, looksDestructive, resultNumber } from "./browsing.ts";
 import { afterPhrase, extractUrl, parseCount, parsePercent, planSearch, shortlistBy } from "./parse.ts";
 import { SETTINGS_HOME, SETTINGS_PANES, paneByLabel, shortlistPanes } from "./settings-panes.ts";
 import {
@@ -52,13 +53,18 @@ function appsFor(app: string, ctx: ActionContext): string[] {
 }
 
 /**
- * The browser a link should open in (null: the default). The front app is
- * looked up afresh: in "open Chrome and search for cats" it changed a moment
- * ago, after the context was gathered.
+ * Show a page the way a person would: in the browser in use, and in the tab in
+ * front when that tab holds nothing worth keeping — else in a new tab beside
+ * it (see browsing.ts). Returns the browser used. The front app is looked up
+ * afresh: in "open Chrome and search for cats" it changed a moment ago, after
+ * the context was gathered.
  */
-async function browserFor(os: PlatformAdapter, ctx: ActionContext): Promise<string | null> {
+async function showPage(url: string, os: PlatformAdapter, ctx: ActionContext): Promise<string | undefined> {
   const front = await os.frontApp().catch(() => "");
-  return pickBrowser({ ...ctx, focusedApp: front || ctx.focusedApp });
+  const browser = pickBrowser({ ...ctx, focusedApp: front || ctx.focusedApp }) ?? ctx.defaultBrowser;
+  const tab = browser ? await os.browserTab(browser).catch(() => null) : null;
+  await os.browse(url, browser, chooseTab(tab?.url ?? null, ctx.lastPage));
+  return browser;
 }
 
 export const ACTIONS = {
@@ -659,9 +665,8 @@ export const ACTIONS = {
     examples: ["go to github dot com", "open example.com", "open youtube", "visit reddit", "open youtube in chrome"],
     slots: { url: textSlot("The web address", extractUrl) },
     async run({ url }, os, ctx) {
-      const browser = await browserFor(os, ctx);
-      await os.openUrl(url, browser ?? undefined);
-      return { detail: `Opened ${url}`, app: browser ?? ctx.defaultBrowser };
+      const browser = await showPage(url, os, ctx);
+      return { detail: `Opened ${url}`, app: browser, page: url };
     },
   }),
 
@@ -685,15 +690,29 @@ export const ACTIONS = {
     },
     async run({ query }, os, ctx) {
       const plan = planSearch(withoutBrowser(ctx.transcript) || query, query, ctx.windowTitle);
-      const browser = await browserFor(os, ctx);
-      await os.openUrl(plan.url, browser ?? undefined);
+      const browser = await showPage(plan.url, os, ctx);
       const detail =
         plan.kind === "site"
           ? `Opened ${plan.label}`
           : plan.label === "the web"
             ? `Searched for "${plan.query}"`
             : `Searched ${plan.label} for "${plan.query}"`;
-      return { detail, app: browser ?? ctx.defaultBrowser };
+      return { detail, app: browser, page: plan.url };
+    },
+  }),
+
+  click_on: action({
+    describe:
+      "Click a link, button or search result that is showing on screen, by the words on it or by its position: 'click YouTube', 'click the first result', 'click Sign in', 'press the Continue button'. Acts on the window in front.",
+    examples: ["click youtube", "click the first result", "click sign in", "press the continue button", "open the second result"],
+    slots: { target: textSlot("The words on the thing to click, or which result", clickTarget) },
+    confirmIf: ({ target }) => looksDestructive(target),
+    async run({ target }, os) {
+      const nth = resultNumber(target);
+      const r = await os.click(nth ? { nth } : { text: target });
+      // Not remembered as a page: a result's link is often a redirect, and
+      // where it lands is the user's own reading, to be kept.
+      return { detail: `Clicked ${r.label || target}` };
     },
   }),
 

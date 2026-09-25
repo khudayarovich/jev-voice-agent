@@ -3,7 +3,16 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { app, clipboard } from "electron";
-import type { AppInfo, FocusContext, KeyCombo, PlatformAdapter } from "../types.ts";
+import type {
+  AppInfo,
+  BrowserTab,
+  ClickResult,
+  ClickTarget,
+  FocusContext,
+  KeyCombo,
+  PlatformAdapter,
+} from "../types.ts";
+import { browseScript, frontTabScript, parseFrontTab, scriptFamily } from "./browsers.ts";
 import { defaultBrowserId, parseMdls, parseMdlsDate } from "./launchservices.ts";
 import { parseDisplayName, parseForegroundApps } from "./lsappinfo.ts";
 import { asStr, osa, runAppleScript } from "./osascript.ts";
@@ -17,6 +26,18 @@ const APP_CACHE_MS = 60_000;
 const AUTOMATION_CACHE_MS = 5 * 60_000;
 /** Where LaunchServices records which app opens which kind of link. */
 const LAUNCH_SERVICES_PREFS = "Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist";
+
+/**
+ * The helper that finds and presses things on screen (native/jev-ax). Built by
+ * `npm run setup` for development, and shipped inside the app.
+ */
+export function screenHelper(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "native", "jev-ax")
+    : path.join(app.getAppPath(), "vendor", "jev-ax", "jev-ax");
+}
+
+const withScheme = (url: string) => (/^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `https://${url}`);
 
 /**
  * macOS implementation.
@@ -202,6 +223,11 @@ export class MacPlatform implements PlatformAdapter {
       { timeoutMs: 4000 },
     ).catch(() => "");
     return out ? out.split(", ").map((s) => s.trim()).filter(Boolean) : [];
+  }
+
+  async windowedApps(): Promise<string[]> {
+    const { stdout } = await exec(screenHelper(), ["windows"], { timeout: 2000 });
+    return (JSON.parse(stdout) as { apps?: string[] }).apps ?? [];
   }
 
   /** The frontmost app's name, from LaunchServices. ~10 ms. */
@@ -518,11 +544,28 @@ end tell`;
 
   // --- web & files -------------------------------------------------------
 
-  async openUrl(url: string, browser?: string): Promise<void> {
-    const safe = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  async browse(url: string, browser: string | undefined, where: "current" | "new-tab"): Promise<void> {
+    const safe = withScheme(url);
+    const family = browser ? scriptFamily(browser) : null;
+    if (browser && family && (await this.runningApps()).includes(browser)) {
+      try {
+        await osa(browseScript(browser, family, safe, where), { timeoutMs: 5000 });
+        return;
+      } catch {
+        // Not allowed to control it (yet), or it said no: `open` still works.
+      }
+    }
     // `open -a` opens the link in that browser, launching it if need be;
     // plain `open` hands it to whichever browser LaunchServices picks.
     await exec("/usr/bin/open", browser ? ["-a", browser, safe] : [safe], { timeout: 6000 });
+  }
+
+  async browserTab(browser: string): Promise<BrowserTab | null> {
+    const family = scriptFamily(browser);
+    // Asking a browser that is not running would launch it, just to ask.
+    if (!family || !(await this.runningApps()).includes(browser)) return null;
+    const out = await osa(frontTabScript(browser, family), { timeoutMs: 3000 }).catch(() => "");
+    return parseFrontTab(out);
   }
 
   /**
@@ -566,6 +609,30 @@ end tell`;
 
   async revealInFiles(target: string): Promise<void> {
     await exec("/usr/bin/open", ["-R", target], { timeout: 5000 });
+  }
+
+  // --- on screen ---------------------------------------------------------
+
+  async click(target: ClickTarget): Promise<ClickResult> {
+    const helper = screenHelper();
+    const args = "nth" in target ? ["click", "--nth", String(target.nth)] : ["click", "--text", target.text];
+    let stdout: string;
+    try {
+      ({ stdout } = await exec(helper, args, { timeout: 8000 }));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(app.isPackaged ? "The clicking helper is missing. Reinstall JVA." : "Build the clicking helper first: npm run setup");
+      }
+      throw err;
+    }
+    const r = JSON.parse(stdout) as { ok: boolean; label?: string; url?: string; error?: string; message?: string };
+    if (!r.ok) {
+      if (r.error === "no-permission") {
+        throw new Error("Accessibility permission is needed to click things on screen. Grant it in Settings → Permissions.");
+      }
+      throw new Error(r.message ?? "Could not click that");
+    }
+    return { label: r.label ?? "", ...(r.url ? { url: r.url } : {}) };
   }
 
   // --- camera & settings -------------------------------------------------

@@ -198,11 +198,12 @@ function siteSearch(site: string, query: string): SearchPlan | null {
  * Where a "search for …" should actually go.
  *
  * Four cases, from real use:
- *   - the "query" is a site — "search for youtube.com" — so open the site; a
- *     search results page listing YouTube is not what anyone wanted
+ *   - the "query" is an address — "search for youtube.com" — so open it; a
+ *     results page listing the address is not what anyone wanted
  *   - a site search — "search YouTube for cats", "play lofi on YouTube"
  *   - "search for cats there": the site in the front window, by its title
- *   - everything else: a web search
+ *   - everything else, a site's bare name included, is a web search. "Search
+ *     for YouTube" is how people get to the results they then click on.
  */
 export function planSearch(transcript: string, query: string, windowTitle = ""): SearchPlan {
   let q = query.trim().replace(/[.?!]+$/, "").replace(/^(the|a)\s+/i, "");
@@ -210,15 +211,11 @@ export function planSearch(transcript: string, query: string, windowTitle = ""):
   if (here) q = q.replace(HERE, "");
   const words = q.toLowerCase().replace(/[^a-z0-9.\s-]/g, " ").replace(/\s+/g, " ").trim();
 
-  // The query IS a site: an address ("youtube.com") or a site's name alone
-  // ("youtube"). "github copilot" is a search, not github.com.
+  // The query IS an address: "youtube.com", "github dot com".
   const spoken = words.replace(/\s+dot\s+/g, ".").replace(/\s+slash\s+/g, "/");
-  const isAddress = /^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/.test(spoken);
-  const named = KNOWN_SITES[spoken];
-  if (isAddress || named) {
-    const site = named ?? spoken;
-    const url = /^https?:\/\//i.test(site) ? site : `https://${site}`;
-    return { url, kind: "site", label: site, query: q };
+  if (/^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/.test(spoken)) {
+    const url = /^https?:\/\//i.test(spoken) ? spoken : `https://${spoken}`;
+    return { url, kind: "site", label: spoken, query: q };
   }
 
   // A search on one site. Matched in the whole transcript, where the site and

@@ -16,6 +16,7 @@
  */
 import { app } from "electron";
 import { SLOT_CONFIDENCE_MIN, instantRoute } from "../../src/main/actions/realtime.ts";
+import { splitCommands } from "../../src/main/actions/split.ts";
 import type { ActionContext } from "../../src/main/actions/types.ts";
 import * as jev from "../../src/main/jev/client.ts";
 import { type RouteDecision, route } from "../../src/main/jev/router.ts";
@@ -31,7 +32,7 @@ type Env = Omit<ActionContext, "transcript">;
 
 interface Case {
   say: string;
-  /** Acceptable commands. */
+  /** Acceptable commands — for a chain, one list per clause, joined by " + ". */
   expect: string[];
   /** The app or settings page it should act on, where there is one. */
   target?: string | RegExp;
@@ -42,6 +43,14 @@ interface Case {
 }
 
 const BROWSERS_OPEN = { runningApps: ["Finder", "Safari", "Google Chrome"] };
+const ON_RESULTS = {
+  focusedApp: "Google Chrome",
+  windowTitle: "youtube - Google Search",
+  runningApps: ["Finder", "Google Chrome"],
+  lastBrowser: "Google Chrome",
+  lastPage: "https://www.google.com/search?q=youtube",
+  recent: ["Opened Google Chrome", 'Searched for "youtube"'],
+};
 const IN_CHROME = { focusedApp: "Google Chrome", ...BROWSERS_OPEN, lastBrowser: "Google Chrome" };
 
 const CASES: Case[] = [
@@ -76,6 +85,21 @@ const CASES: Case[] = [
   { say: "search for pasta recipes in safari", expect: ["web_search"] },
   { say: "google the weather", expect: ["web_search"] },
   { say: "go to github dot com", expect: ["open_url"] },
+  // --- on a page of results, in the browser in use -------------------------
+  { say: "open browser.", expect: ["open_app"], target: /Safari|Google Chrome/ },
+  { say: "search for YouTube", expect: ["web_search"], env: { focusedApp: "Google Chrome", runningApps: ["Finder", "Google Chrome"] } },
+  { say: "open YouTube.", expect: ["open_url", "click_on"], env: ON_RESULTS },
+  { say: "click youtube", expect: ["click_on"], target: "youtube", env: ON_RESULTS },
+  { say: "click on youtube", expect: ["click_on"], target: "youtube", env: ON_RESULTS },
+  { say: "click the first result", expect: ["click_on"], target: "first result", env: ON_RESULTS },
+  { say: "open the second result", expect: ["click_on"], target: "second result", env: ON_RESULTS },
+  { say: "click on images", expect: ["click_on"], target: "images", env: ON_RESULTS },
+  { say: "click sign in", expect: ["click_on"], target: "sign in", env: ON_RESULTS },
+  { say: "press the continue button", expect: ["click_on"], target: "continue" },
+  { say: "press enter", expect: ["press_enter"] },
+  { say: "go back", expect: ["go_back"], env: ON_RESULTS },
+  { say: "open chrome and search for youtube", expect: ["open_app + web_search"] },
+  { say: "search for cats and click the first result", expect: ["web_search + click_on"], env: ON_RESULTS },
   // --- closing and quitting ------------------------------------------------
   { say: "close the browser.", expect: ["close_app_window"], target: "Google Chrome", env: IN_CHROME },
   { say: "close all browsers.", expect: ["quit_app", "close_app_window"], target: "Every open web browser", env: BROWSERS_OPEN },
@@ -91,7 +115,7 @@ const CASES: Case[] = [
   { say: "check for software updates", expect: ["open_settings"], target: "Software Update" },
   // --- the rest still works ------------------------------------------------
   { say: "set the volume to thirty percent", expect: ["set_volume"] },
-  { say: "open Notes and create a new note", expect: ["open_app"], target: "Notes" },
+  { say: "open Notes and create a new note", expect: ["open_app + new_window"] },
   { say: "turn on dark mode", expect: ["dark_mode_on"] },
 ];
 
@@ -103,13 +127,14 @@ async function main(): Promise<void> {
   const only = process.argv.slice(2).find((a) => !a.startsWith("-"))?.toLowerCase();
 
   const os = platform();
-  const [installed, running, automations, defaultBrowser] = await Promise.all([
-    os.listApps(), os.runningApps(), os.listAutomations(), os.defaultBrowser(),
+  const [installed, running, automations, defaultBrowser, windowed] = await Promise.all([
+    os.listApps(), os.runningApps(), os.listAutomations(), os.defaultBrowser(), os.windowedApps().catch(() => undefined),
   ]);
   const base: Env = {
     focusedApp: "Finder",
     windowTitle: "",
     runningApps: running,
+    ...(windowed ? { windowedApps: windowed } : {}),
     installedApps: [...installed].sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0)).map((a) => a.name),
     automations,
     defaultBrowser,
@@ -122,11 +147,22 @@ async function main(): Promise<void> {
   const tokens: number[] = [];
   const cases = CASES.filter((c) => !only || c.say.toLowerCase().includes(only));
   for (const c of cases) {
-    const ctx: ActionContext = { ...base, ...c.env, transcript: c.say };
-    const d: RouteDecision =
-      (settings.instantCommands ? instantRoute(c.say, ctx) : null) ??
-      (await route(ctx, { confidenceThreshold: settings.confidenceThreshold, offlineFallback: false }));
-    const target = String(d.args.app ?? d.args.pane ?? d.args.url ?? d.args.query ?? "");
+    const decideOne = async (clause: string): Promise<RouteDecision> => {
+      const ctx: ActionContext = { ...base, ...c.env, transcript: clause };
+      return (settings.instantCommands ? instantRoute(clause, ctx) : null) ??
+        (await route(ctx, { confidenceThreshold: settings.confidenceThreshold, offlineFallback: false }));
+    };
+    // As the app does: a chain is split, and each clause decided on its own.
+    const clauses = splitCommands(c.say);
+    const decisions = await Promise.all(clauses.map(decideOne));
+    const d: RouteDecision = decisions.length === 1
+      ? decisions[0]!
+      : {
+          ...decisions.at(-1)!,
+          action: decisions.map((x) => x.action).join(" + ") as RouteDecision["action"],
+          confidence: Math.min(...decisions.map((x) => x.confidence)),
+        };
+    const target = String(d.args.app ?? d.args.pane ?? d.args.url ?? d.args.target ?? d.args.query ?? "");
     const actionOk = d.action !== null && c.expect.includes(d.action);
     const targetOk =
       c.target === undefined || (typeof c.target === "string" ? target === c.target : c.target.test(target));

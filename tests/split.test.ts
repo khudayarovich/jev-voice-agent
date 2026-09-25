@@ -52,3 +52,24 @@ test("keeps three chained commands", () => {
     "lock the screen",
   ]);
 });
+
+test("a command, then a search whose words keep their 'and'", () => {
+  // Said in one breath with a recogniser too slow to stream, this used to stay
+  // one command, and half of it was lost.
+  assert.deepEqual(splitCommands("open chrome and search for youtube"), ["open chrome", "search for youtube"]);
+  assert.deepEqual(splitCommands("open chrome and search for cats and dogs"), ["open chrome", "search for cats and dogs"]);
+  assert.deepEqual(splitCommands("open notes and type hello and goodbye"), ["open notes", "type hello and goodbye"]);
+});
+
+test("a search, then a click on what it found", () => {
+  assert.deepEqual(splitCommands("search for cats and dogs and click the first result"), [
+    "search for cats and dogs",
+    "click the first result",
+  ]);
+  assert.deepEqual(splitCommands("search for youtube and open the second result"), ["search for youtube", "open the second result"]);
+});
+
+test("what to click keeps its 'and'", () => {
+  assert.deepEqual(splitCommands("click terms and conditions"), ["click terms and conditions"]);
+  assert.deepEqual(splitCommands("type hello and click send"), ["type hello and click send"], "dictation stays literal");
+});

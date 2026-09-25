@@ -1,4 +1,4 @@
-import type { AppInfo, FocusContext, KeyCombo, PlatformAdapter } from "../types.ts";
+import type { AppInfo, BrowserTab, ClickResult, FocusContext, KeyCombo, PlatformAdapter } from "../types.ts";
 import { NotImplementedError } from "../types.ts";
 
 /**
@@ -38,6 +38,9 @@ export class WindowsPlatform implements PlatformAdapter {
   }
   focus(): Promise<FocusContext> {
     return Promise.resolve({ app: "" });
+  }
+  windowedApps(): Promise<string[]> {
+    return Promise.resolve([]);
   }
   frontApp(): Promise<string> {
     return Promise.resolve("");
@@ -86,11 +89,13 @@ export class WindowsPlatform implements PlatformAdapter {
   typeText(): Promise<void> { this.nope("Typing text"); }
   scroll(): Promise<void> { this.nope("Scrolling"); }
 
-  openUrl(): Promise<void> { this.nope("Opening URLs"); }
+  browse(): Promise<void> { this.nope("Opening URLs"); }
+  browserTab(): Promise<BrowserTab | null> { return Promise.resolve(null); }
   defaultBrowser(): Promise<string> { this.nope("Finding the default browser"); }
   screenshot(): Promise<string> { this.nope("Screenshots"); }
   revealInFiles(): Promise<void> { this.nope("Revealing files"); }
 
+  click(): Promise<ClickResult> { this.nope("Clicking on screen"); }
   takePhoto(): Promise<void> { this.nope("Taking photos"); }
   openSettingsPane(): Promise<void> { this.nope("Opening settings pages"); }
 }

@@ -61,7 +61,7 @@ Then:
 git clone https://github.com/khudayarovich/jev-voice-agent.git
 cd jev-voice-agent
 npm install
-npm run setup    # builds whisper.cpp and downloads the models (~500 MB, once)
+npm run setup    # builds whisper.cpp and the clicking helper, downloads the models (~500 MB, once)
 npm start
 ```
 
@@ -134,8 +134,19 @@ isolated commands. What real use turned up, and what the agent does about it:
   apps you have never opened.
 - **One browser, the one you are using.** A link or a search opens in the
   browser you named (*"open YouTube in Chrome"*), else the one in front, else the
-  one you just used, else one already open, and only then the system default.
-  *"The browser"* follows the same rule. *"Close all browsers"* means all of them.
+  one you just used, else one with a window open, and only then the system
+  default. *"The browser"* follows the same rule. *"Close all browsers"* means all
+  of them.
+- **In the tab you are on.** A search or a link goes into the tab in front when
+  it holds nothing worth keeping — an empty tab, a page of results, the page it
+  just opened — and into a new tab of the same window otherwise. Never a new
+  window. So *"open browser"*, *"search for YouTube"*, *"open YouTube"* happens
+  in one tab, the way you would do it. (The first time, macOS asks to let JVA
+  control Safari or Chrome.)
+- **Click what you see.** *"Click YouTube"*, *"click the first result"*, *"click
+  Sign in"*, *"press the Continue button"* press it on screen, found through
+  Accessibility — in a web page or any app. *"Search for cats and click the first
+  result"* works in one breath. Buttons like Delete, Send or Buy ask first.
 - **Sites, not searches for sites.** *"Search for youtube.com"* opens YouTube.
   *"Search YouTube for cats"*, *"play lofi music on YouTube"* and *"look up pizza
   on Google Maps"* go to that site's own search; *"search for cats there"* searches
@@ -221,14 +232,15 @@ latency           mean 489ms   p50 410ms   p95 1222ms
 tokens            1901 per command
 ```
 
-`npm run eval` checks understanding on this Mac, with its real app list: 42
-requests that describe rather than name, involve browsers, or sit close to
-another command — including every one that went wrong in real use ("open selfie
-camera", "search for youtube.com", "close all browsers", "take a photo").
-Nothing is executed:
+`npm run eval` checks understanding on this Mac, with its real app list: 56
+requests that describe rather than name, involve browsers and clicking, chain
+two commands, or sit close to another command — including every one that went
+wrong in real use ("open selfie camera", "search for youtube.com", "close all
+browsers", "take a photo", "open YouTube" on a page of results). Nothing is
+executed:
 
 ```
-42/42 right   routing p50 307 ms   p90 637 ms   3980 input tokens per request
+56/56 right   routing p50 317 ms   p90 623 ms   3912 input tokens per request
 ```
 
 Confidence is well separated: before the criteria were tightened, the two wrong

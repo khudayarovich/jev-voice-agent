@@ -7,12 +7,17 @@ import { planSearch } from "../src/main/actions/parse.ts";
  * Google search for the words "youtube.com", when the user wanted YouTube.
  */
 
-test("a site given as the query opens the site", () => {
+test("an address given as the query opens it", () => {
   assert.deepEqual(planSearch("search for youtube.com", "youtube.com"), {
     url: "https://youtube.com", kind: "site", label: "youtube.com", query: "youtube.com",
   });
-  assert.equal(planSearch("search for youtube", "youtube").url, "https://youtube.com");
   assert.equal(planSearch("search for github dot com", "github dot com").url, "https://github.com");
+});
+
+test("a site's bare name is searched for, as the user then clicks the result", () => {
+  const plan = planSearch("search for youtube", "youtube");
+  assert.equal(plan.kind, "search");
+  assert.equal(plan.url, "https://www.google.com/search?q=youtube");
 });
 
 test("a query that merely contains a site's name is a search", () => {

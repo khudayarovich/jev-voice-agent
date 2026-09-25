@@ -21,6 +21,22 @@ export interface FocusContext {
   windowTitle?: string;
 }
 
+/** What a browser's front tab is showing. */
+export interface BrowserTab {
+  url: string;
+  title: string;
+}
+
+/** What to click: words on the thing, or the nth search result. */
+export type ClickTarget = { text: string } | { nth: number };
+
+/** What was clicked. */
+export interface ClickResult {
+  label: string;
+  /** Where it leads, for a link. */
+  url?: string;
+}
+
 /** A modifier + key combination, expressed the way a user would say it. */
 export interface KeyCombo {
   key: string;
@@ -34,6 +50,8 @@ export interface PlatformAdapter {
   listApps(): Promise<AppInfo[]>;
   runningApps(): Promise<string[]>;
   focus(): Promise<FocusContext>;
+  /** Apps with a window showing on this desktop; a running app may have none. */
+  windowedApps(): Promise<string[]>;
   /** Just the frontmost app's name — cheaper than `focus()`. */
   frontApp(): Promise<string>;
   /**
@@ -89,12 +107,22 @@ export interface PlatformAdapter {
   scroll(direction: "up" | "down", amount: number): Promise<void>;
 
   // --- web & files -------------------------------------------------------
-  /** Open a link in the named browser, or in the default one. */
-  openUrl(url: string, browser?: string): Promise<void>;
+  /**
+   * Show a page in a browser, in its front window: in the tab in front, or a
+   * new one beside it. Launches the browser, or opens a window, if need be.
+   * No browser named: the system default decides.
+   */
+  browse(url: string, browser: string | undefined, where: "current" | "new-tab"): Promise<void>;
+  /** A browser's front tab, or null: not running, no window, or it cannot say. */
+  browserTab(browser: string): Promise<BrowserTab | null>;
   /** The app that opens links by default, e.g. "Safari". */
   defaultBrowser(): Promise<string>;
   screenshot(mode: "screen" | "selection" | "window"): Promise<string>;
   revealInFiles(path: string): Promise<void>;
+
+  // --- on screen ---------------------------------------------------------
+  /** Press a link or button in the window in front, found by its words or position. */
+  click(target: ClickTarget): Promise<ClickResult>;
 
   // --- camera & settings -------------------------------------------------
   /** Take a picture with the built-in camera, the way the user would. */

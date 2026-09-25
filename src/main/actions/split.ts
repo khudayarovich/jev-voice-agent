@@ -43,6 +43,18 @@ export function clauseTail(transcript: string, k: number): string {
   return "";
 }
 
+/** The request up to its `k`th conjunction: the counterpart of `clauseTail`. */
+function clauseHead(transcript: string, k: number): string {
+  const re = new RegExp(SEPARATOR.source, "gi");
+  let m: RegExpExecArray | null;
+  let seen = 0;
+  while ((m = re.exec(transcript)) !== null) {
+    if (++seen === k) return transcript.slice(0, m.index).trim();
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  return transcript.trim();
+}
+
 /** Cut at the conjunctions, without judging whether the pieces are commands. */
 export function clausesOf(transcript: string): string[] {
   return transcript
@@ -60,24 +72,34 @@ export function splitCommands(transcript: string): string[] {
 
   if (parts.length < 2) return [whole];
 
-  // If the request as a whole reads as a text-payload command, the conjunction
-  // is part of what the user wants typed or searched for.
-  const leading = rankActions(whole, 1)[0];
-  if (leading && TEXT_PAYLOAD.has(leading)) return [whole];
+  const tops = parts.map((part) => rankActions(part, 1)[0]);
+
+  // A request that opens with dictation or a search: the conjunction is part of
+  // what the user wants typed or searched for — up to a clause that acts on
+  // what the search found: "search for cats and dogs and click the first
+  // result" is a search for "cats and dogs", then a click.
+  if (tops[0] && TEXT_PAYLOAD.has(tops[0])) {
+    const click = tops[0] === "web_search" ? tops.findIndex((top, i) => i > 0 && top === "click_on") : -1;
+    return click > 0 ? [clauseHead(whole, click), clauseTail(whole, click)] : [whole];
+  }
+
+  // Commands, perhaps ending in one whose text runs to the end: "open Notes and
+  // type hello and goodbye" is two commands, and the second keeps its "and".
+  // Before this, a request like "open Chrome and search for YouTube" stayed one
+  // command whenever the recogniser was too slow to stream, and half of it was
+  // lost.
+  const text = tops.findIndex((top) => top !== undefined && TEXT_PAYLOAD.has(top));
+  const commands = text > 0 ? parts.slice(0, text) : parts;
 
   // Every piece has to stand on its own as a command, or this was one sentence
   // that merely contained "and".
-  const eachIsCommand = parts.every((part) => {
-    const top = rankActions(part, 1)[0];
-    return top !== undefined && !TEXT_PAYLOAD.has(top);
-  });
-  if (!eachIsCommand) return [whole];
+  if (!commands.every((_, i) => tops[i] !== undefined)) return [whole];
+  if (text > 0) return [...commands, clauseTail(whole, text)];
 
   // And the pieces must not all resolve to the same action, which is what a
   // split sentence like "scroll down and down" looks like.
-  const actions = parts.map((part) => rankActions(part, 1)[0]);
-  if (new Set(actions).size === 1 && actions.length > 1) {
-    const only = actions[0];
+  if (new Set(tops).size === 1) {
+    const only = tops[0];
     if (only && ACTIONS[only].slots && Object.keys(ACTIONS[only].slots).length === 0) {
       return [whole];
     }

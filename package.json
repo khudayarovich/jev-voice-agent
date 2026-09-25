@@ -27,7 +27,7 @@
     "dev": "node scripts/build.mjs --watch",
     "start": "npm run build && electron .",
     "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
-    "dist": "bash scripts/setup.sh --only portable,vad,kws && npm run build && electron-builder --mac --arm64",
+    "dist": "bash scripts/setup.sh --only portable,vad,kws,ax && npm run build && electron-builder --mac --arm64",
     "tail": "tail -f \"$HOME/Library/Application Support/jev-voice-agent/jev.log\"",
     "calibrate": "node --experimental-strip-types scripts/calibrate.mjs",
     "bench": "node scripts/run-in-electron.mjs scripts/bench/main.ts",
@@ -65,6 +65,10 @@
       {
         "from": "vendor/whisper.cpp/build-portable/bin/whisper-server",
         "to": "whisper/whisper-server"
+      },
+      {
+        "from": "vendor/jev-ax/jev-ax",
+        "to": "native/jev-ax"
       },
       {
         "from": "resources/models/silero_vad.onnx",

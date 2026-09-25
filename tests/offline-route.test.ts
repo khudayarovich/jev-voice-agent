@@ -25,22 +25,29 @@ function ctx(transcript: string, extra: Partial<ActionContext> = {}): ActionCont
   };
 }
 
-/** Records what the OS was asked to do instead of doing it. */
-function recorder() {
+/**
+ * Records what the OS was asked to do instead of doing it. `answers` stands in
+ * for what the OS would say back: the front tab of a browser, say.
+ */
+function recorder(answers: Record<string, unknown> = {}) {
   const calls: { method: string; args: unknown[] }[] = [];
   const handler: ProxyHandler<object> = {
     get(_t, prop: string) {
       if (prop === "platform") return "darwin";
       return (...args: unknown[]) => {
         calls.push({ method: prop, args });
+        if (prop in answers) return Promise.resolve(answers[prop]);
         if (prop === "getVolume") return Promise.resolve(50);
         if (prop === "screenshot") return Promise.resolve("/tmp/shot.png");
+        if (prop === "click") return Promise.resolve({ label: "YouTube", url: "https://www.youtube.com/" });
         return Promise.resolve();
       };
     },
   };
   return { calls, os: new Proxy({}, handler) as unknown as PlatformAdapter };
 }
+
+const CHROME_OPEN = { focusedApp: "Google Chrome", runningApps: ["Finder", "Safari", "Google Chrome"], defaultBrowser: "Safari" };
 
 test("routes and executes a volume command, parsing the number in code", async () => {
   const d = offlineRoute(ctx("set volume to twenty percent"));
@@ -86,8 +93,8 @@ test("lifts free text verbatim rather than generating it", async () => {
   await execute(d.action!, d.args, os, ctx(phrase));
   // In the browser already open, rather than launching the default one.
   assert.deepEqual(calls.at(-1), {
-    method: "openUrl",
-    args: ["https://www.google.com/search?q=typescript%20generics", "Safari"],
+    method: "browse",
+    args: ["https://www.google.com/search?q=typescript%20generics", "Safari", "new-tab"],
   });
 });
 
@@ -95,12 +102,58 @@ test("a search opens in the browser the user is looking at", async () => {
   // Observed in real use: "open my browser" opened Chrome, and the search
   // after it opened in Safari, the default — a second browser.
   const phrase = "search for youtube";
-  const c = ctx(phrase, { focusedApp: "Google Chrome", runningApps: ["Finder", "Safari", "Google Chrome"], defaultBrowser: "Safari" });
+  const c = ctx(phrase, CHROME_OPEN);
   const d = offlineRoute(c);
   assert.equal(d.action, "web_search");
   const { calls, os } = recorder();
   await execute(d.action!, d.args, os, c);
-  assert.deepEqual(calls.at(-1), { method: "openUrl", args: ["https://youtube.com", "Google Chrome"] });
+  assert.deepEqual(calls.at(-1), { method: "browse", args: ["https://www.google.com/search?q=youtube", "Google Chrome", "new-tab"] });
+});
+
+test("a search goes into the empty tab the browser just opened", async () => {
+  const c = ctx("search for youtube", CHROME_OPEN);
+  const { calls, os } = recorder({ browserTab: { url: "chrome://new-tab-page/", title: "New Tab" } });
+  await execute("web_search", { query: "youtube" }, os, c);
+  assert.deepEqual(calls.at(-1), { method: "browse", args: ["https://www.google.com/search?q=youtube", "Google Chrome", "current"] });
+});
+
+test("opening a site from a page of results goes there in the same tab", async () => {
+  // From real use: "open YouTube" on the results of "search for YouTube" opened
+  // a whole new window.
+  const c = ctx("open youtube", CHROME_OPEN);
+  const { calls, os } = recorder({ browserTab: { url: "https://www.google.com/search?q=YouTube&sca_esv=1", title: "YouTube - Google Search" } });
+  const r = await execute("open_url", { url: "youtube.com" }, os, c);
+  assert.deepEqual(calls.at(-1), { method: "browse", args: ["youtube.com", "Google Chrome", "current"] });
+  assert.equal(r.page, "youtube.com");
+});
+
+test("a page the user is reading is kept, and the new one gets a tab beside it", async () => {
+  const c = ctx("open github", CHROME_OPEN);
+  const { calls, os } = recorder({ browserTab: { url: "https://news.example.com/story/42", title: "A story" } });
+  await execute("open_url", { url: "github.com" }, os, c);
+  assert.deepEqual(calls.at(-1)?.args.at(-1), "new-tab");
+});
+
+test("the page this conversation opened may be replaced by the next", async () => {
+  const c = ctx("open github", { ...CHROME_OPEN, lastPage: "youtube.com" });
+  const { calls, os } = recorder({ browserTab: { url: "https://www.youtube.com/", title: "YouTube" } });
+  await execute("open_url", { url: "github.com" }, os, c);
+  assert.deepEqual(calls.at(-1)?.args.at(-1), "current");
+});
+
+test("clicks a result by its position, or a link by its words", async () => {
+  for (const [phrase, target] of [
+    ["click the first result", { nth: 1 }],
+    ["open the second result", { nth: 2 }],
+    ["click youtube", { text: "youtube" }],
+    ["click on the sign in button", { text: "sign in" }],
+  ] as const) {
+    const d = offlineRoute(ctx(phrase));
+    assert.equal(d.action, "click_on", phrase);
+    const { calls, os } = recorder();
+    await execute(d.action!, d.args, os, ctx(phrase));
+    assert.deepEqual(calls.at(-1), { method: "click", args: [target] }, phrase);
+  }
 });
 
 test("a site named as the search opens the site itself", async () => {
@@ -129,7 +182,7 @@ test("a browser named in the request is the one used, and is not searched for", 
   assert.equal(d.args.query, "cats");
   const { calls, os } = recorder();
   await execute(d.action!, d.args, os, c);
-  assert.deepEqual(calls.at(-1), { method: "openUrl", args: ["https://www.google.com/search?q=cats", "Google Chrome"] });
+  assert.deepEqual(calls.at(-1), { method: "browse", args: ["https://www.google.com/search?q=cats", "Google Chrome", "new-tab"] });
 });
 
 test("a settings page opens directly", async () => {

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { IPC } from "../shared/ipc.ts";
 import type { AppSettings, CommandLogEntry } from "../shared/types.ts";
 import { ALL_BROWSERS, expandApps, isBrowser, listNames } from "./actions/apps.ts";
+import { landedOn } from "./actions/browsing.ts";
 import { execute, isDismissal, missingSlots, readClarification, readConfirmation } from "./actions/execute.ts";
 import { rankActions } from "./actions/rank.ts";
 import {
@@ -237,10 +238,12 @@ function refreshEnv(): Promise<Env> {
     os.listApps().catch(() => []),
     os.listAutomations().catch(() => [] as string[]),
     os.defaultBrowser().catch(() => ""),
-  ]).then(([focus, running, installed, automations, defaultBrowser]) => ({
+    os.windowedApps().catch(() => undefined),
+  ]).then(([focus, running, installed, automations, defaultBrowser, windowed]) => ({
     focusedApp: focus.app,
     windowTitle: focus.windowTitle ?? "",
     runningApps: running,
+    ...(windowed ? { windowedApps: windowed } : {}),
     // Most recently used first: when nothing was named and the router has to
     // offer a list, the likely answers should be at the top of it.
     installedApps: [...installed]
@@ -272,6 +275,7 @@ function currentEnv(): Promise<Env> {
  */
 const recent: { at: number; detail: string }[] = [];
 let lastBrowser: { name: string; at: number } | null = null;
+let lastPage: { url: string; at: number } | null = null;
 
 /** Actions older than this are not "just now" any more. */
 const RECENT_MS = 3 * 60_000;
@@ -283,6 +287,7 @@ function remember(action: ActionKey, args: Record<string, string | number>, resu
   recent.push({ at: now, detail: result.detail ?? phrase(action) });
   while (recent.length > 4) recent.shift();
   if (result.app && isBrowser(result.app)) lastBrowser = { name: result.app, at: now };
+  if (result.page) lastPage = { url: result.page, at: now };
   if (action === "quit_app" && lastBrowser && expandApps(String(args.app), e.runningApps).includes(lastBrowser.name)) {
     lastBrowser = null;
   }
@@ -296,7 +301,13 @@ function withMemory(e: Env): Env {
     lastBrowser && (now - lastBrowser.at < BROWSER_MEMORY_MS || e.runningApps.includes(lastBrowser.name))
       ? lastBrowser.name
       : undefined;
-  return { ...e, ...(done.length ? { recent: done } : {}), ...(browser ? { lastBrowser: browser } : {}) };
+  const page = lastPage && now - lastPage.at < RECENT_MS ? lastPage.url : undefined;
+  return {
+    ...e,
+    ...(done.length ? { recent: done } : {}),
+    ...(browser ? { lastBrowser: browser } : {}),
+    ...(page ? { lastPage: page } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -766,8 +777,9 @@ interface Outcome {
 function needsConfirmation(d: RouteDecision): boolean {
   if (!d.action || !getSettings().confirmDestructive) return false;
   // Gated on BOTH the registry flag and the model's own read of how much damage
-  // a misunderstanding would do.
-  return ACTIONS[d.action].destructive === true || d.risk >= 2.5;
+  // a misunderstanding would do — and, for a click, on what is being clicked.
+  const def = ACTIONS[d.action] as { destructive?: boolean; confirmIf?: (args: Record<string, string | number>) => boolean };
+  return def.destructive === true || def.confirmIf?.(d.args) === true || d.risk >= 2.5;
 }
 
 /**
@@ -850,7 +862,7 @@ async function run(
     // Another command follows: let the app just opened actually come to the
     // front first, or "open Safari and open a new tab" sends its Cmd-T to
     // whatever was in front a moment ago.
-    if (more) await settleFocus(action, result.app, before);
+    if (more) await settleFocus(action, result.app, before, result.page);
     return { outcome: "ok", action, detail: result.detail ?? phrase(action), decision, execMs };
   } catch (err) {
     fileLog("execute", "failed", { action, args, message: describe(err) });
@@ -858,7 +870,7 @@ async function run(
   }
 }
 
-async function settleFocus(action: ActionKey, app: string | undefined, before: string): Promise<void> {
+async function settleFocus(action: ActionKey, app: string | undefined, before: string, page?: string): Promise<void> {
   const os = platform();
   if (app) {
     // The app it opened or used, whichever that was: a browser for a link, the
@@ -867,6 +879,16 @@ async function settleFocus(action: ActionKey, app: string | undefined, before: s
   } else if (action === "open_url" || action === "web_search") {
     // The browser comes forward — unless it already was in front.
     await os.waitForFrontmost((a) => a !== before, 600);
+  }
+  // And the page itself has to arrive: "search for cats and click the first
+  // result" must click among these results, not the ones already on screen.
+  if (app && page && (action === "open_url" || action === "web_search")) {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const tab = await os.browserTab(app).catch(() => null);
+      if (!tab || landedOn(tab.url, page)) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
   }
   void refreshEnv();
 }
@@ -986,6 +1008,8 @@ function confirmQuestion(action: ActionKey, args: Record<string, string | number
       return "Empty the Trash? This can't be undone.";
     case "sleep_system":
       return "Put the Mac to sleep?";
+    case "click_on":
+      return `Click “${String(args.target ?? "")}”?`;
     default:
       return `${phrase(action)}${apps ? ` — ${apps}` : ""}?`;
   }

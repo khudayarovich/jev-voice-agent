@@ -5,10 +5,11 @@
 #   - a speech-to-text model (small.en unless you choose another)
 #   - the Silero voice-activity model
 #   - the sherpa-onnx keyword-spotter model used for the wake word
+#   - jev-ax, the small native helper that clicks things on screen
 #
 #   npm run setup                         # everything, with small.en
 #   npm run setup -- --model base.en      # a different speech model
-#   npm run setup -- --only kws           # just some: whisper, model, vad, kws, portable
+#   npm run setup -- --only kws           # just some: whisper, model, vad, kws, ax, portable
 #   npm run setup -- --only portable,vad  # (comma-separated; portable is what `npm run dist` ships)
 #
 # Safe to run again: anything already in place is left alone. Other speech
@@ -42,8 +43,8 @@ esac
 
 for piece in ${ONLY//,/ }; do
   case "$piece" in
-    whisper | model | vad | kws | portable) ;;
-    *) echo "Unknown piece: $piece (choose whisper, model, vad, kws or portable)" >&2; exit 2 ;;
+    whisper | model | vad | kws | ax | portable) ;;
+    *) echo "Unknown piece: $piece (choose whisper, model, vad, kws, ax or portable)" >&2; exit 2 ;;
   esac
 done
 
@@ -136,6 +137,20 @@ if want kws; then
     download "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/$KWS.tar.bz2" "$MODELS/$KWS.tar.bz2"
     tar -xjf "$MODELS/$KWS.tar.bz2" -C "$MODELS"
     rm -f "$MODELS/$KWS.tar.bz2"
+  fi
+fi
+
+if want ax; then
+  AX_SRC="$ROOT/native/jev-ax/main.swift"
+  AX_BIN="$ROOT/vendor/jev-ax/jev-ax"
+  if [[ -x "$AX_BIN" && "$AX_BIN" -nt "$AX_SRC" ]]; then
+    step "The clicking helper is already built"
+  else
+    xcode-select -p >/dev/null 2>&1 || { echo "The Xcode command line tools are needed: xcode-select --install" >&2; exit 1; }
+    step "Building the clicking helper"
+    mkdir -p "$(dirname "$AX_BIN")"
+    # macOS 14 is the app's floor, as for the speech engine.
+    xcrun swiftc -O -swift-version 5 -target arm64-apple-macos14.0 -o "$AX_BIN" "$AX_SRC"
   fi
 fi
 
