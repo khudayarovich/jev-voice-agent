@@ -184,7 +184,7 @@ test("a browser named outright is left alone", async () => {
 test("an app counts as named only when the words name all of it", async () => {
   // From real use: "open Yandex Music" opened Apple's Music, at 0.99 — the
   // name "Music" was in the words, and taken for the whole of them.
-  const { namesExactly } = await import("../src/main/actions/slots.ts");
+  const { namesExactly } = await import("../src/main/actions/parse.ts");
   assert.equal(namesExactly("open yandex music", "Music"), false);
   assert.equal(namesExactly("open music", "Music"), true);
   assert.equal(namesExactly("open the music app please", "Music"), true);

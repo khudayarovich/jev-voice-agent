@@ -150,6 +150,21 @@ test("a site named alone opens at once, unless an app has that exact name", () =
   assert.equal(instantRoute("open the yandex music app", ctx()), null, "asked for as an app: Jev decides");
 });
 
+test("a settings page named by itself opens at once, said to Settings or said as settings", () => {
+  const inSettings = ctx({ focusedApp: "System Settings" });
+  assert.deepEqual(instantRoute("Go to battery.", inSettings)?.args, { pane: "Battery" });
+  assert.deepEqual(instantRoute("go to wi-fi", inSettings)?.args, { pane: "Wi-Fi" });
+  assert.deepEqual(instantRoute("open the battery settings", ctx())?.args, { pane: "Battery" });
+  assert.deepEqual(instantRoute("open privacy and security settings", ctx())?.args, { pane: "Privacy & Security" });
+  assert.deepEqual(instantRoute("open mission control settings", ctx())?.args, { pane: "Desktop & Dock" });
+  // Elsewhere these name other things too: the model reads them.
+  for (const said of ["go to battery", "go to desktop", "open spotlight", "open notifications"]) {
+    assert.equal(instantRoute(said, ctx()), null, said);
+  }
+  // An exact phrasing of another command still means that command.
+  assert.equal(instantRoute("show desktop", inSettings)?.action, "show_desktop");
+});
+
 test("anything inexact, unknown or destructive still goes to Jev", () => {
   for (const said of [
     "open the browser", // a description, not a name

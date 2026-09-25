@@ -236,6 +236,39 @@ test("reports no action when nothing matches, instead of guessing", () => {
   assert.equal(d.confidence, 0);
 });
 
+test("without Jev, a keyword guess is not acted on", () => {
+  // From a real outage: "go to battery" came out as sleep, and "show hidden
+  // files in Finder" opened Mission Control, each at a confidence that acted.
+  for (const said of ["Go to battery.", "go to bluetooth", "Show hidden files in Finder.", "No hidden files in Finder.", "Open set things."]) {
+    const d = offlineRoute(ctx(said));
+    assert.ok(d.confidence < 0.55, `${said} → ${d.action} at ${d.confidence}`);
+  }
+});
+
+test("without Jev, what the words say plainly still works", () => {
+  for (const [said, action, args] of [
+    ["Open settings of the Mac.", "open_settings", { pane: "System Settings" }],
+    ["open the battery settings", "open_settings", { pane: "Battery" }],
+    ["turn on bluetooth please", "bluetooth_on", {}],
+    ["can you take a screenshot now", "screenshot_screen", {}],
+    ["set the volume to thirty percent", "set_volume", { level: 30 }],
+    ["scroll down three pages", "scroll_down", { amount: 3 }],
+    ["switch to slack", "open_app", { app: "Slack" }],
+    ["search for cats", "web_search", { query: "cats" }],
+  ] as const) {
+    const d = offlineRoute(ctx(said));
+    assert.equal(d.action, action, said);
+    assert.deepEqual(d.args, args, said);
+    assert.ok(d.confidence >= 0.55, `${said} at ${d.confidence}`);
+  }
+});
+
+test("without Jev, an app is only one named by all the words", () => {
+  // "Open Yandex Music" contains "Music", and opened it.
+  const d = offlineRoute(ctx("open yandex music", { installedApps: ["Music", "Safari"] }));
+  assert.notEqual(d.args.app, "Music");
+});
+
 test("offline decisions are flagged as offline and cost nothing", () => {
   const d = offlineRoute(ctx("open safari"));
   assert.equal(d.offline, true);

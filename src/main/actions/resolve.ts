@@ -1,4 +1,4 @@
-import { fuzzyScore } from "./parse.ts";
+import { fuzzyScore, namesExactly, saysPlainly } from "./parse.ts";
 import { ACTIONS, type ActionKey } from "./registry.ts";
 import { rankActions } from "./rank.ts";
 import type { ActionContext, EnumSlot, NumberSlot, Slot, TextSlot } from "./types.ts";
@@ -71,27 +71,65 @@ export function resolveLocalSlots(
  * Deterministic matcher used when Jev is unreachable, rate limited, or
  * unconfigured.
  *
- * Far blunter than the model — it matches example phrasings and nothing else —
- * but it keeps the common commands working with no network at all, and it makes
- * the routing tests hermetic.
+ * Far blunter than the model, so it acts only on plain evidence: an example
+ * phrasing said outright, or a command whose verb was said and whose every
+ * slot the words fill. Anything less comes back below any threshold that acts,
+ * because a keyword guess was not enough: during a real outage, "go to
+ * battery" came out as sleep, and "show hidden files in Finder" opened Mission
+ * Control. It also keeps the routing tests hermetic.
  */
 export function offlineRoute(ctx: ActionContext): RouteDecision {
-  const ranked = rankActions(ctx.transcript, 1);
-  const picked = ranked[0];
-  if (!picked) {
+  const attempts = rankActions(ctx.transcript, 4).map((key) => offlineAttempt(key, ctx));
+  const plain = attempts.find((a) => a.plain);
+  const best = plain ?? attempts[0];
+  if (!best) {
     return {
       action: null, args: {}, confidence: 0, addressed: 1, risk: 0,
       offline: true, ms: 0, inputTokens: 0, reason: "no local match",
     };
   }
+  const reason = best.missing.length ? `could not work out the ${best.missing.join(", ")}` : plain ? null : "not sure without Jev";
+  return {
+    action: best.key,
+    args: best.args,
+    confidence: plain ? 0.62 : 0.3,
+    addressed: 1,
+    risk: ACTIONS[best.key].destructive ? 3 : 0,
+    offline: true,
+    ms: 0,
+    inputTokens: 0,
+    ...(reason ? { reason } : {}),
+  };
+}
 
-  const { args, missing, enums } = resolveLocalSlots(picked, ctx.transcript);
+const LEAD_INS = new Set(["please", "can", "could", "would", "you", "hey", "just", "now", "ok", "okay"]);
+
+/** The word that says what to do: "can you open Safari" → "open". */
+function verbOf(s: string): string | null {
+  return s.toLowerCase().split(/[^a-z0-9]+/).find((w) => w && !LEAD_INS.has(w)) ?? null;
+}
+
+/** One command, read from the words alone: its arguments, and whether they say it plainly. */
+function offlineAttempt(key: ActionKey, ctx: ActionContext) {
+  const { args, missing, enums } = resolveLocalSlots(key, ctx.transcript);
+  const slots = Object.entries(ACTIONS[key].slots as Record<string, Slot>);
+
+  // Did the words supply any of it, or only defaults? "go to battery" fills
+  // scroll_down's page count, with the one page it has when none is said: a
+  // number is the words' only if, without them, it would differ.
+  let named = slots.some(([name, slot]) =>
+    name in args &&
+    (slot.kind === "text" ||
+      (slot.kind === "number" && (slot as NumberSlot).parse(ctx.transcript) !== (slot as NumberSlot).parse(""))));
 
   // Resolve enum slots by direct mention only — no guessing.
   for (const [name, slot] of Object.entries(enums)) {
     const certain = certainChoice(slot, ctx);
     if (certain) {
       args[name] = certain;
+      // The words chose it only if, without them, the choice would differ:
+      // with no page named, the settings page is System Settings anyway.
+      if (certainChoice(slot, { ...ctx, transcript: "" }) !== certain) named = true;
       continue;
     }
     const all = slot.shortlist
@@ -100,22 +138,18 @@ export function offlineRoute(ctx: ActionContext): RouteDecision {
     const best = all
       .map((c) => ({ c, s: fuzzyScore(ctx.transcript, c) }))
       .sort((a, b) => b.s - a.s)[0];
-    if (best && best.s >= 0.9) args[name] = best.c;
-    else missing.push(name);
+    // An app named by all the words: "open Yandex Music" does not name Music.
+    if (best && best.s >= 0.9 && (slot.group !== "app" || namesExactly(ctx.transcript, best.c))) {
+      args[name] = best.c;
+      named = true;
+    } else missing.push(name);
   }
 
-  const confidence = missing.length === 0 ? 0.62 : 0.3;
-  return {
-    action: picked,
-    args,
-    confidence,
-    addressed: 1,
-    risk: ACTIONS[picked].destructive ? 3 : 0,
-    offline: true,
-    ms: 0,
-    inputTokens: 0,
-    ...(missing.length ? { reason: `could not work out the ${missing.join(", ")}` } : {}),
-  };
+  const { examples } = ACTIONS[key];
+  const verb = verbOf(ctx.transcript);
+  const saidOutright = examples.some((ex) => saysPlainly(ctx.transcript, ex));
+  const saidWithItsVerb = named && examples.some((ex) => verbOf(ex) === verb);
+  return { key, args, missing, plain: missing.length === 0 && (saidOutright || saidWithItsVerb) };
 }
 
 /**

@@ -74,7 +74,8 @@ export function parseCount(transcript: string, fallback = 1): number {
   if (/\b(thrice|three times)\b/.test(t)) return 3;
   if (/\b(a lot|way|much)\b/.test(t)) return 5;
   if (/\b(a bit|a little|slightly)\b/.test(t)) return 1;
-  const m = t.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+times?\b/);
+  // "three times", and for scrolling "three pages".
+  const m = t.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:times?|pages?|screens?)\b/);
   if (m?.[1]) {
     const n = parseSpokenNumber(m[1]);
     if (n !== null) return Math.max(1, Math.min(20, n));
@@ -341,6 +342,54 @@ export function fuzzyScore(transcript: string, candidate: string): number {
     return adjacentWordsSpell(spoken, all.join("")) ? 0.9 : 0;
   }
   return hits / scored.length;
+}
+
+const OBJECT_STOPWORDS = new Set(["the", "a", "an", "my", "please", "for", "me", "now", "app", "application"]);
+
+/**
+ * The words that name the thing: "open yandex music" → ["yandex", "music"],
+ * "quit the safari app" → ["safari"].
+ */
+export function objectWords(transcript: string): string[] {
+  return transcript
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:please\s+)?(?:open|launch|start|run|switch to|bring up|go to|quit|close|exit|hide|show|focus|activate)\s+/, "")
+    .split(" ")
+    .filter((w) => w && !OBJECT_STOPWORDS.has(w));
+}
+
+/**
+ * Did the words name this app, and nothing more? "open yandex music"
+ * contains "Music", but names Yandex Music: observed in real use, it opened
+ * Apple's Music at 0.99. Every word of the object must be in the name —
+ * or, squashed together, spell it ("vs code" for VSCode).
+ */
+export function namesExactly(transcript: string, app: string): boolean {
+  const said = objectWords(transcript);
+  if (said.length === 0) return false;
+  const name = new Set(app.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return said.every((w) => name.has(w)) || said.join("") === squash(app);
+}
+
+/** Words that say how, not what: "can you take a screenshot now". */
+const COURTESY = new Set(["can", "could", "would", "will", "you", "just", "now", "quickly", "hey", "ok", "okay", "thanks"]);
+
+/**
+ * Does the transcript say this phrase, and little else? "turn on bluetooth,
+ * please" says "turn on bluetooth"; "play a radio" says more than "play".
+ */
+export function saysPlainly(transcript: string, phrase: string): boolean {
+  const spoken = wordsOf(transcript);
+  const run = wordsOf(phrase);
+  if (run.length === 0 || !containsRun(spoken, run)) return false;
+  const content = spoken.filter((w) => !STOPWORDS.has(w) && !COURTESY.has(w));
+  if (content.length === 0) return true;
+  const inPhrase = new Set(run);
+  return content.filter((w) => inPhrase.has(w)).length / content.length >= 2 / 3;
 }
 
 /** Does `words` contain `run` as consecutive whole words? */

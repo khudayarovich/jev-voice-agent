@@ -865,7 +865,11 @@ async function act(
     return {
       outcome: "rejected",
       action: d.action,
-      detail: `Not sure enough — did you mean to ${phrase(d.action).toLowerCase()}?`,
+      // Offline, the doubt is the network's doing: say so, rather than
+      // offering the local matcher's guess as if it were a reading.
+      detail: d.offline && d.reason
+        ? sentence(d.reason) ?? d.reason
+        : `Not sure enough — did you mean to ${phrase(d.action).toLowerCase()}?`,
       decision: d,
     };
   }

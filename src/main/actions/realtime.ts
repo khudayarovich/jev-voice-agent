@@ -3,6 +3,7 @@ import { missingSlots } from "./execute.ts";
 import { rankActions } from "./rank.ts";
 import { ACTIONS, ACTION_KEYS, type ActionKey } from "./registry.ts";
 import { siteNamed } from "./parse.ts";
+import { SETTINGS_HOME, paneNamed } from "./settings-panes.ts";
 import { type RouteDecision, certainChoice, resolveLocalSlots } from "./resolve.ts";
 import { TEXT_PAYLOAD, clausesOf } from "./split.ts";
 import type { ActionContext } from "./types.ts";
@@ -144,6 +145,10 @@ export function actsEarly(
 /** "open Safari", "launch the Terminal app", "switch to Slack, please". */
 const OPEN_APP = /^(?:please\s+)?(?:open|launch|start|switch to|bring up)\s+(?:the\s+)?(.+?)(?:\s+app|\s+application)?(?:\s+please)?$/;
 
+/** "go to Battery", "open the display settings". */
+const OPEN_PANE =
+  /^(?:open|go to|go back to|show(?: me)?|take me to|switch to|bring up)\s+(?:the\s+)?(.+?)(\s+(?:settings|preferences|settings page|pane|page|section))?$/;
+
 /** "open Yandex Music", "go to the GitHub website". */
 const OPEN_SITE = /^(?:please\s+)?(?:open|go to|visit|take me to)\s+(?:the\s+)?(.+?)(?:\s+website|\s+site)?(?:\s+please)?$/;
 
@@ -206,6 +211,7 @@ export function instantRoute(transcript: string, ctx: ActionContext): RouteDecis
   }
 
   const key = examples().get(t);
+  if (key === undefined) return paneRoute(t, ctx);
   if (!key || key === "run_learned") return null;
   const { args, missing, enums } = resolveLocalSlots(key, transcript);
   if (missing.length > 0) return null;
@@ -217,6 +223,21 @@ export function instantRoute(transcript: string, ctx: ActionContext): RouteDecis
     args[name] = certain;
   }
   return decision(key, args);
+}
+
+/**
+ * A settings page named by itself: "go to Battery" said to System Settings,
+ * or "open the battery settings" said anywhere. Observed in real use: with the
+ * network slow, "go to battery" was guessed to mean sleep. Only in Settings, or
+ * said as settings, since "desktop", "spotlight" and "notifications" name
+ * other things too.
+ */
+function paneRoute(t: string, ctx: ActionContext): RouteDecision | null {
+  const m = t.match(OPEN_PANE);
+  const pane = m?.[1] ? paneNamed(m[1]) : undefined;
+  if (!pane) return null;
+  const inSettings = ctx.focusedApp === SETTINGS_HOME || ctx.focusedApp === "System Preferences";
+  return m?.[2] || inSettings ? decision("open_settings", { pane }) : null;
 }
 
 function decision(action: ActionKey, args: Record<string, string | number>): RouteDecision {

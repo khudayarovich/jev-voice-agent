@@ -1,5 +1,5 @@
 import { ALL_BROWSERS, describeApp, isBrowser, listNames, pickBrowser, refersToBrowser, wantsAll } from "./apps.ts";
-import { fuzzyScore, shortlistBy } from "./parse.ts";
+import { fuzzyScore, namesExactly, shortlistBy } from "./parse.ts";
 import { rankActions } from "./rank.ts";
 import { ACTIONS, type ActionKey } from "./registry.ts";
 import { NONE } from "./resolve.ts";
@@ -61,37 +61,6 @@ function enumSlotsOf(action: ActionKey): [string, EnumSlot][] {
 }
 
 const hasAppSlot = (action: ActionKey) => enumSlotsOf(action).some(([, s]) => s.group === "app");
-
-const OBJECT_STOPWORDS = new Set(["the", "a", "an", "my", "please", "for", "me", "now", "app", "application"]);
-
-/**
- * The words that name the thing: "open yandex music" → ["yandex", "music"],
- * "quit the safari app" → ["safari"].
- */
-export function objectWords(transcript: string): string[] {
-  return transcript
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^(?:please\s+)?(?:open|launch|start|run|switch to|bring up|go to|quit|close|exit|hide|show|focus|activate)\s+/, "")
-    .split(" ")
-    .filter((w) => w && !OBJECT_STOPWORDS.has(w));
-}
-
-/**
- * Did the words name this app, and nothing more? "open yandex music"
- * contains "Music", but names Yandex Music: observed in real use, it opened
- * Apple's Music at 0.99. Every word of the object must be in the name —
- * or, squashed together, spell it ("vs code" for VSCode).
- */
-export function namesExactly(transcript: string, app: string): boolean {
-  const said = objectWords(transcript);
-  if (said.length === 0) return false;
-  const name = new Set(app.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
-  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return said.every((w) => name.has(w)) || said.join("") === squash(app);
-}
 
 /**
  * Every app worth offering: running first, since they are the likeliest

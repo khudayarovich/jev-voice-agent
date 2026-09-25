@@ -77,6 +77,18 @@ export function paneByLabel(label: string): SettingsPane | undefined {
 const norm = (s: string) =>
   ` ${s.toLowerCase().replace(/[-_]/g, " ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim()} `;
 
+const bare = (s: string) => norm(s).replace(/ and /g, " ").trim();
+
+/**
+ * The page these words name, and nothing more: "battery" is Battery, "wi-fi"
+ * is Wi-Fi, "privacy and security" is Privacy & Security. "battery life" is
+ * not a page: that is for the model to read.
+ */
+export function paneNamed(words: string): string | undefined {
+  const w = bare(words);
+  return SETTINGS_PANES.find((p) => bare(p.label) === w || p.words.some((x) => bare(x) === w))?.label;
+}
+
 /**
  * The pages a request mentions, best first: the page with the longest matching
  * phrase wins, so "screen time" beats "time" and "dark mode" beats nothing.
