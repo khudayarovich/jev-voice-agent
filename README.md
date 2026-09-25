@@ -66,7 +66,9 @@ npm start
 ```
 
 To build the installer yourself, `npm run dist` produces
-`release/JevVoiceAgent-<version>-arm64.dmg`, with a self-contained speech engine
+`release.noindex/JevVoiceAgent-<version>-arm64.dmg` (the `.noindex` keeps the
+unpacked app it also leaves there out of Spotlight, so search finds only the
+installed copy), with a self-contained speech engine
 built for any Apple Silicon Mac. Set `CSC_NAME` to a Developer ID certificate to
 sign it properly; otherwise it is signed ad hoc.
 
