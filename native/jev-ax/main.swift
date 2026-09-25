@@ -146,8 +146,12 @@ func search(_ root: AXUIElement, key: String, words: String?, limit: Int) -> [AX
   return found
 }
 
-/** Everything pressable in a native window, walked breadth first within a budget. */
-func pressables(in window: AXUIElement, budget: Int = 4000) -> [AXUIElement] {
+/**
+ * Everything pressable in a window, walked breadth first within a budget. Web
+ * pages are skipped unless asked for: they are searched separately, and a big
+ * one is far too big to walk.
+ */
+func pressables(in window: AXUIElement, budget: Int = 4000, intoWeb: Bool = false) -> [AXUIElement] {
   let kinds: Set<String> = [
     "AXButton", "AXLink", "AXMenuItem", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXSwitch",
     "AXRadioButton", "AXTab", "AXDisclosureTriangle", "AXCell", "AXRow",
@@ -160,7 +164,7 @@ func pressables(in window: AXUIElement, budget: Int = 4000) -> [AXUIElement] {
     visited += 1
     let r = role(element)
     if kinds.contains(r) { out.append(element) }
-    if r == "AXWebArea" { continue }  // searched separately, and far too big to walk
+    if r == "AXWebArea" && !intoWeb { continue }
     queue.append(contentsOf: children(element))
   }
   return out
@@ -378,6 +382,11 @@ func click(text wanted: String?, nth: Int?, dryRun: Bool) -> Never {
   }
   if (best?.score ?? 0) < 100 {
     for element in pressables(in: window) { consider(element) }
+  }
+  // Electron apps — Slack, Discord, VS Code, this app's own Settings — answer
+  // the page search with nothing: walk their pages instead, which are small.
+  if best == nil, web != nil {
+    for element in pressables(in: window, budget: 6000, intoWeb: true) { consider(element) }
   }
   guard let chosen = best else {
     fail("not-found", "Couldn't find \"\(wanted)\" in \(appName.isEmpty ? "the window in front" : appName).")
