@@ -426,7 +426,21 @@ export function withValue(step: LearnedStep, value: string | null): LearnedStep 
   }
 }
 
-/** What a command does, short enough for the overlay: "Open Slack, then press ⌘N". */
+const SYMBOLS: Record<string, string> = { ctrl: "⌃", option: "⌥", shift: "⇧", cmd: "⌘", fn: "fn " };
+const KEY_NAMES: Record<string, string> = {
+  return: "↩", enter: "↩", tab: "⇥", space: "Space", delete: "⌫", escape: "⎋",
+  up: "↑", down: "↓", left: "←", right: "→",
+};
+
+/** "shift+cmd+n" → "⇧⌘N", the way macOS writes it in menus. */
+export function showCombo(combo: string): string {
+  const parts = combo.split("+");
+  const key = combo.endsWith("+") ? "+" : parts.pop()!;
+  const shown = KEY_NAMES[key] ?? (key.length === 1 ? key.toUpperCase() : key.toUpperCase());
+  return parts.map((p) => SYMBOLS[p] ?? p).join("") + shown;
+}
+
+/** What a command does, short enough for the overlay: "Open app Slack, then press ⌘N". */
 export function summarize(command: LearnedCommand): string {
   const said = (s: LearnedStep): string => {
     switch (s.do) {
@@ -435,7 +449,7 @@ export function summarize(command: LearnedCommand): string {
         return `${s.action.replace(/_/g, " ")}${shown ? ` ${shown}` : ""}`;
       }
       case "keys":
-        return `press ${s.combo}${s.app ? ` in ${s.app}` : ""}`;
+        return `press ${showCombo(s.combo)}${s.app ? ` in ${s.app}` : ""}`;
       case "menu":
         return `choose ${s.path.join(" › ")}${s.app ? ` in ${s.app}` : ""}`;
       case "open_url":

@@ -1125,7 +1125,9 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
     lesson,
     windowMs: LESSON_WINDOW_MS,
   };
-  const question = `New command “${lesson.title}”: ${summarize(lesson)}. Say yes to try it and keep it.`;
+  // One line in the overlay, which keeps the end in view when it is long: so
+  // the answer to give comes last.
+  const question = `Learn “${lesson.title}”? ${summarize(lesson)}. Say yes to keep it.`;
   coordinator.setState("confirming", question);
   play("confirm");
   showHud();

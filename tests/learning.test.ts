@@ -172,7 +172,7 @@ test("a new id never collides with a command that exists", async () => {
 
 test("says what a command does, short enough for the overlay", () => {
   const cmd = { steps: [{ do: "action", action: "open_app", args: { app: "Slack" } }, { do: "keys", combo: "cmd+k" }, { do: "type", text: "general" }] } as LearnedCommand;
-  assert.equal(summarize(cmd), 'Open app Slack, then press cmd+k, then type "general"');
+  assert.equal(summarize(cmd), 'Open app Slack, then press ⌘K, then type "general"');
 });
 
 test("reads shortcuts however they are written", () => {
