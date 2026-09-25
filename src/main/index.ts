@@ -127,7 +127,10 @@ async function main(): Promise<void> {
   // pane rather than wondering what the new menu-bar icon is.
   const configured = apiKeySummary().present && permissions.requiredSatisfied();
   if (!configured) {
-    openSettings();
+    // The Permissions pane, in front: after an update the grants are what is
+    // missing, and the system's own dialogs were being lost behind windows.
+    openSettings("permissions");
+    app.focus({ steal: true });
     watchForSetup();
     return;
   }
