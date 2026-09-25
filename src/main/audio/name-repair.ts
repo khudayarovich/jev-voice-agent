@@ -66,6 +66,7 @@ const PROTECTED = new Set([
   "that", "my", "me", "please", "thanks", "thank", "you", "is", "for", "with",
   "browser", "app", "application", "file", "folder", "trash", "percent", "times",
   "hey", "jeff", "jev", "yes", "no", "okay", "ok",
+  "photo", "picture", "selfie", "camera", "settings", "page", "site",
 ]);
 
 /** "note" and "notes", "match" and "matches": one word, two numbers. */
@@ -127,8 +128,11 @@ export function repairAppNames(transcript: string, appNames: string[]): RepairRe
       // allowed to read "note" as Notes when that is what was meant.
       if (sameWordPlural(bare.toLowerCase(), app.toLowerCase())) continue;
 
+      // One consonant out is a near miss in a long shape, but in a two-letter
+      // one it is half the evidence gone: "photo" (f-t) became "Phone" (f-n),
+      // and "take a photo" opened the Phone app. Short shapes must match.
       const shapeDistance = distance(shape, key);
-      if (shapeDistance > 1) continue;
+      if (shapeDistance > (Math.min(shape.length, key.length) <= 2 ? 0 : 1)) continue;
 
       // Shapes agree; require the spellings to be in the same neighbourhood too,
       // so "clod" can become "Claude" but "cold" does not become "Clock".

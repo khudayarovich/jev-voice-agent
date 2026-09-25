@@ -89,10 +89,18 @@ export interface PlatformAdapter {
   scroll(direction: "up" | "down", amount: number): Promise<void>;
 
   // --- web & files -------------------------------------------------------
-  openUrl(url: string): Promise<void>;
-  webSearch(query: string): Promise<void>;
+  /** Open a link in the named browser, or in the default one. */
+  openUrl(url: string, browser?: string): Promise<void>;
+  /** The app that opens links by default, e.g. "Safari". */
+  defaultBrowser(): Promise<string>;
   screenshot(mode: "screen" | "selection" | "window"): Promise<string>;
   revealInFiles(path: string): Promise<void>;
+
+  // --- camera & settings -------------------------------------------------
+  /** Take a picture with the built-in camera, the way the user would. */
+  takePhoto(): Promise<void>;
+  /** Open one page of the system settings, by its identifier. */
+  openSettingsPane(id: string): Promise<void>;
 }
 
 /** Thrown by the Windows scaffold for anything not yet ported. */

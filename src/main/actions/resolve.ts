@@ -24,6 +24,12 @@ export interface RouteDecision {
   offline: boolean;
   /** Decided on this Mac by an exact match, without asking Jev. */
   instant?: boolean;
+  /** Jev's confidence in the least certain slot it chose, e.g. which app. */
+  slotConfidence?: number;
+  /** Which slot that was, e.g. "app". */
+  unsureSlot?: string;
+  /** The runner-up for that slot, to offer when it was not sure. */
+  alternative?: string;
   ms: number;
   inputTokens: number;
   reason?: string;

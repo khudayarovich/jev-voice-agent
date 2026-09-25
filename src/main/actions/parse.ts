@@ -157,6 +157,97 @@ export function extractUrl(transcript: string): string | null {
   return null;
 }
 
+/** Sites with a search page of their own: "search YouTube for cats". */
+const SITE_SEARCH: Record<string, { label: string; url: (q: string) => string }> = {
+  youtube: { label: "YouTube", url: (q) => `https://www.youtube.com/results?search_query=${q}` },
+  google: { label: "Google", url: (q) => `https://www.google.com/search?q=${q}` },
+  github: { label: "GitHub", url: (q) => `https://github.com/search?q=${q}` },
+  wikipedia: { label: "Wikipedia", url: (q) => `https://en.wikipedia.org/w/index.php?search=${q}` },
+  amazon: { label: "Amazon", url: (q) => `https://www.amazon.com/s?k=${q}` },
+  reddit: { label: "Reddit", url: (q) => `https://www.reddit.com/search/?q=${q}` },
+  "stack overflow": { label: "Stack Overflow", url: (q) => `https://stackoverflow.com/search?q=${q}` },
+  "google maps": { label: "Google Maps", url: (q) => `https://www.google.com/maps/search/${q}` },
+  maps: { label: "Google Maps", url: (q) => `https://www.google.com/maps/search/${q}` },
+  spotify: { label: "Spotify", url: (q) => `https://open.spotify.com/search/${q}` },
+  bing: { label: "Bing", url: (q) => `https://www.bing.com/search?q=${q}` },
+  duckduckgo: { label: "DuckDuckGo", url: (q) => `https://duckduckgo.com/?q=${q}` },
+};
+
+const SITE_NAMES = Object.keys(SITE_SEARCH).sort((a, b) => b.length - a.length).join("|");
+
+export interface SearchPlan {
+  url: string;
+  /** "site" opens a website directly; "search" runs a search. */
+  kind: "site" | "search";
+  /** For the HUD: "YouTube", or the site opened. */
+  label: string;
+  query: string;
+}
+
+/** "search for cats there": the site the user is looking at. */
+const HERE = /\s+(?:there|here|on (?:this|that|the) (?:site|page|website))$/i;
+
+function siteSearch(site: string, query: string): SearchPlan | null {
+  const s = SITE_SEARCH[site.toLowerCase().replace(/\s+/g, " ")];
+  if (!s) return null;
+  const q = query.trim();
+  return { url: s.url(encodeURIComponent(q)), kind: "search", label: s.label, query: q };
+}
+
+/**
+ * Where a "search for …" should actually go.
+ *
+ * Four cases, from real use:
+ *   - the "query" is a site — "search for youtube.com" — so open the site; a
+ *     search results page listing YouTube is not what anyone wanted
+ *   - a site search — "search YouTube for cats", "play lofi on YouTube"
+ *   - "search for cats there": the site in the front window, by its title
+ *   - everything else: a web search
+ */
+export function planSearch(transcript: string, query: string, windowTitle = ""): SearchPlan {
+  let q = query.trim().replace(/[.?!]+$/, "").replace(/^(the|a)\s+/i, "");
+  const here = HERE.test(q);
+  if (here) q = q.replace(HERE, "");
+  const words = q.toLowerCase().replace(/[^a-z0-9.\s-]/g, " ").replace(/\s+/g, " ").trim();
+
+  // The query IS a site: an address ("youtube.com") or a site's name alone
+  // ("youtube"). "github copilot" is a search, not github.com.
+  const spoken = words.replace(/\s+dot\s+/g, ".").replace(/\s+slash\s+/g, "/");
+  const isAddress = /^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/.test(spoken);
+  const named = KNOWN_SITES[spoken];
+  if (isAddress || named) {
+    const site = named ?? spoken;
+    const url = /^https?:\/\//i.test(site) ? site : `https://${site}`;
+    return { url, kind: "site", label: site, query: q };
+  }
+
+  // A search on one site. Matched in the whole transcript, where the site and
+  // the query are in their natural order.
+  const t = transcript.trim().replace(/[.?!]+$/, "");
+  const leading = new RegExp(`\\b(?:search|look\\s+up|find)\\s+(?:on\\s+|in\\s+)?(${SITE_NAMES})\\s+(?:for\\s+)?(.+)$`, "i").exec(t);
+  const trailing = new RegExp(`\\b(?:search\\s+(?:for\\s+)?|look\\s+up\\s+|find\\s+|play\\s+|watch\\s+|listen\\s+to\\s+)(.+?)\\s+(?:on|in)\\s+(${SITE_NAMES})$`, "i").exec(t);
+  const hit = leading ? { site: leading[1]!, q: leading[2]! } : trailing ? { site: trailing[2]!, q: trailing[1]! } : null;
+  const onSite = hit && siteSearch(hit.site, hit.q.replace(HERE, ""));
+  if (onSite) return onSite;
+
+  // "there": whichever of those sites the front window is showing. A browser's
+  // window title is the page's: "lofi hip hop - YouTube".
+  if (here) {
+    const title = windowTitle.toLowerCase();
+    const site = Object.keys(SITE_SEARCH)
+      .sort((a, b) => b.length - a.length)
+      .find((name) => title.includes(name) || title.includes(name.replace(/\s+/g, "")));
+    const there = site && siteSearch(site, q);
+    if (there) return there;
+  }
+
+  return {
+    url: `https://www.google.com/search?q=${encodeURIComponent(q)}`,
+    kind: "search",
+    label: "the web",
+    query: q,
+  };
+}
 
 /**
  * Words that carry no evidence about which command was meant.

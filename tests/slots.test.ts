@@ -95,3 +95,88 @@ test("the app universe puts running apps first and has no duplicates", () => {
   assert.deepEqual(u.slice(0, 3), ["Finder", "Safari", "Telegram"]);
   assert.equal(new Set(u).size, u.length);
 });
+
+test("an app never opened is still offered, and described", async () => {
+  // From real use: "open selfie camera" opened FaceTime, because the list sent
+  // was the 80 most recently used apps and Photo Booth had never been opened.
+  const many = Array.from({ length: 150 }, (_, i) => `App ${i}`);
+  const c = ctx("open selfie camera", { installedApps: [...many, "FaceTime", "Photo Booth"] });
+  const plan = await planSlots(c);
+  const q = plan.questions.get(APP_QUESTION);
+  assert.ok(q?.candidates.includes("Photo Booth"), "Photo Booth must be a choice");
+  assert.match(q?.notes?.["Photo Booth"] ?? "", /camera/i);
+  assert.ok(q && q.candidates.length <= 240, "fits in a Choice");
+});
+
+test("browsers are told apart by which is default, open, or just used", async () => {
+  const c = ctx("open my browser", {
+    runningApps: ["Finder", "Google Chrome"],
+    installedApps: ["Safari", "Google Chrome"],
+    defaultBrowser: "Safari",
+    lastBrowser: "Google Chrome",
+  });
+  const q = (await planSlots(c)).questions.get(APP_QUESTION);
+  assert.match(q?.notes?.Safari ?? "", /default browser/);
+  assert.match(q?.notes?.["Google Chrome"] ?? "", /just used/);
+});
+
+test("'all the browsers' is offered only when asked for, and when there are several", async () => {
+  const two = { runningApps: ["Finder", "Safari", "Google Chrome"], installedApps: ["Safari", "Google Chrome"] };
+  const all = (await planSlots(ctx("close all browsers", two))).questions.get(APP_QUESTION);
+  assert.equal(all?.candidates[0], "Every open web browser");
+  assert.match(all?.notes?.["Every open web browser"] ?? "", /Safari and Google Chrome/);
+
+  const one = (await planSlots(ctx("close the browser", two))).questions.get(APP_QUESTION);
+  assert.ok(!one?.candidates.includes("Every open web browser"));
+});
+
+test("quitting every browser is allowed although the group is not an app", async () => {
+  const c = ctx("quit all browsers", { runningApps: ["Safari", "Google Chrome"] });
+  const plan = await planSlots(c);
+  const read = readSlots("quit_app", { [APP_QUESTION]: { choice: "Every open web browser", confidence: 0.9 } }, plan, c);
+  assert.deepEqual(read.args, { app: "Every open web browser" });
+  assert.equal(read.notRunning, undefined);
+});
+
+test("an unsure app answer reports its confidence and the runner-up", async () => {
+  const c = ctx("open the camera");
+  const plan = await planSlots(c);
+  const read = readSlots(
+    "open_app",
+    { [APP_QUESTION]: { choice: "Photoshop", confidence: 0.3, probabilities: { Photoshop: 0.3, Safari: 0.25, none: 0.4 } } },
+    plan,
+    c,
+  );
+  assert.equal(read.confidence, 0.3);
+  assert.equal(read.alternative, "Safari", "never 'none'");
+});
+
+test("an app said outright is certain", async () => {
+  const read = readSlots("open_app", {}, await planSlots(ctx("open Claude")), ctx("open Claude"));
+  assert.equal(read.confidence, 1);
+});
+
+test("'the browser' follows the rule, whatever the model leaned towards", async () => {
+  // Measured: with only Chrome open, the model split 51/49 between Chrome and
+  // the default Safari. The one open is the one meant.
+  const c = ctx("open the browser", {
+    runningApps: ["Finder", "Google Chrome"],
+    installedApps: ["Safari", "Google Chrome"],
+    defaultBrowser: "Safari",
+  });
+  const plan = await planSlots(c);
+  const read = readSlots("open_app", { [APP_QUESTION]: { choice: "Safari", confidence: 0.51 } }, plan, c);
+  assert.deepEqual(read.args, { app: "Google Chrome" });
+  assert.equal(read.confidence, 1, "a rule, so nothing to ask");
+});
+
+test("a browser named outright is left alone", async () => {
+  const c = ctx("open the chrome browser", {
+    runningApps: ["Finder", "Safari"],
+    installedApps: ["Safari", "Google Chrome"],
+    defaultBrowser: "Safari",
+  });
+  const plan = await planSlots(c);
+  const read = readSlots("open_app", { [APP_QUESTION]: { choice: "Google Chrome", confidence: 0.9 } }, plan, c);
+  assert.deepEqual(read.args, { app: "Google Chrome" });
+});

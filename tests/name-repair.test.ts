@@ -89,3 +89,10 @@ test("an ordinary noun is not turned into the app named after its plural", () =>
     assert.equal(repairAppNames(said, apps).text, said, said);
   }
 });
+
+test("a two-consonant word is not rewritten on one consonant's evidence", () => {
+  // From real use: "take a photo" came out as "take a Phone" and opened Phone.
+  const r = repairAppNames("Take a photo.", ["Phone", "Photos", "Photo Booth", "FaceTime"]);
+  assert.equal(r.text, "Take a photo.");
+  assert.deepEqual(r.repairs, []);
+});

@@ -94,6 +94,14 @@ export function completedClauses(transcript: string): string[] {
 export const ADDRESSED_MIN = 0.35;
 
 /**
+ * Below this, Jev is unsure which app (or other option) was meant, even if the
+ * command itself is clear — "open my code editor" with several installed came
+ * back at 0.50. Better to ask than to open the wrong thing. The same bar as the
+ * command's own default threshold.
+ */
+export const SLOT_CONFIDENCE_MIN = 0.55;
+
+/**
  * Safe to run at a pause, before the silence that ends the utterance?
  *
  * Only a complete, confident, fully-resolved decision. Dictation and searches
@@ -105,6 +113,7 @@ export function actsEarly(d: RouteDecision, clause: string, confidenceThreshold:
   if (!d.action) return false;
   if (d.addressed < ADDRESSED_MIN) return false;
   if (d.confidence < confidenceThreshold) return false;
+  if (d.slotConfidence !== undefined && d.slotConfidence < SLOT_CONFIDENCE_MIN) return false;
   if (missingSlots(d.action, d.args).length > 0) return false;
   if (TEXT_PAYLOAD.has(d.action)) return false;
   return !isIncomplete(clause);

@@ -1,3 +1,7 @@
+import type { PlatformAdapter } from "../platform/types.ts";
+import { expandApps, listNames, pickBrowser, withoutBrowser } from "./apps.ts";
+import { afterPhrase, extractUrl, parseCount, parsePercent, planSearch, shortlistBy } from "./parse.ts";
+import { SETTINGS_HOME, SETTINGS_PANES, paneByLabel, shortlistPanes } from "./settings-panes.ts";
 import {
   type ActionContext,
   type Slots,
@@ -6,7 +10,6 @@ import {
   numberSlot,
   textSlot,
 } from "./types.ts";
-import { afterPhrase, extractUrl, parseCount, parsePercent, shortlistBy } from "./parse.ts";
 
 /**
  * Every command the agent can run.
@@ -41,6 +44,23 @@ const runningAppSlot = (describe: string) =>
     { group: "app", requiresRunning: true },
   );
 
+/** The apps an app slot's answer stands for: one, or every open browser. */
+function appsFor(app: string, ctx: ActionContext): string[] {
+  const apps = expandApps(app, ctx.runningApps);
+  if (apps.length === 0) throw new Error("No browser is open");
+  return apps;
+}
+
+/**
+ * The browser a link should open in (null: the default). The front app is
+ * looked up afresh: in "open Chrome and search for cats" it changed a moment
+ * ago, after the context was gathered.
+ */
+async function browserFor(os: PlatformAdapter, ctx: ActionContext): Promise<string | null> {
+  const front = await os.frontApp().catch(() => "");
+  return pickBrowser({ ...ctx, focusedApp: front || ctx.focusedApp });
+}
+
 export const ACTIONS = {
   // --- applications ------------------------------------------------------
   open_app: action({
@@ -48,9 +68,10 @@ export const ACTIONS = {
       "Launch an application installed on this Mac, or bring it to the front if it is already running. For a website, use the open-website command instead.",
     examples: ["open safari", "launch terminal", "switch to slack", "open finder"],
     slots: { app: appSlot("Which application to open") },
-    async run({ app }, os) {
-      await os.openApp(app);
-      return { detail: `Opened ${app}` };
+    async run({ app }, os, ctx) {
+      const apps = appsFor(app, ctx);
+      for (const a of apps) await os.openApp(a);
+      return { detail: `Opened ${listNames(apps)}`, app: apps.at(-1)! };
     },
   }),
 
@@ -60,9 +81,10 @@ export const ACTIONS = {
     examples: ["quit safari", "exit terminal", "close spotify completely", "close the browser fully"],
     destructive: true,
     slots: { app: runningAppSlot("Which application to quit") },
-    async run({ app }, os) {
-      await os.quitApp(app);
-      return { detail: `Quit ${app}` };
+    async run({ app }, os, ctx) {
+      const apps = appsFor(app, ctx);
+      for (const a of apps) await os.quitApp(a);
+      return { detail: `Quit ${listNames(apps)}` };
     },
   }),
 
@@ -70,9 +92,10 @@ export const ACTIONS = {
     describe: "Hide an application's windows without quitting it.",
     examples: ["hide safari", "hide this app"],
     slots: { app: runningAppSlot("Which application to hide") },
-    async run({ app }, os) {
-      await os.hideApp(app);
-      return { detail: `Hid ${app}` };
+    async run({ app }, os, ctx) {
+      const apps = appsFor(app, ctx);
+      for (const a of apps) await os.hideApp(a);
+      return { detail: `Hid ${listNames(apps)}` };
     },
   }),
 
@@ -109,9 +132,10 @@ export const ACTIONS = {
       "Close the front window of a SPECIFIC application the user named, leaving that application running.",
     examples: ["close the browser", "close the safari window", "close chrome's window"],
     slots: { app: runningAppSlot("Which application's window to close") },
-    async run({ app }, os) {
-      await os.closeAppWindow(app);
-      return { detail: `Closed ${app} window` };
+    async run({ app }, os, ctx) {
+      const apps = appsFor(app, ctx);
+      for (const a of apps) await os.closeAppWindow(a);
+      return { detail: `Closed ${listNames(apps)} window${apps.length > 1 ? "s" : ""}` };
     },
   }),
 
@@ -631,33 +655,51 @@ export const ACTIONS = {
   // --- web ---------------------------------------------------------------
   open_url: action({
     describe:
-      "Open a website in the browser. Use for a spelled-out address AND for a well-known site named directly, such as YouTube, GitHub, Gmail or Reddit — those are websites, not installed applications.",
-    examples: ["go to github dot com", "open example.com", "open youtube", "visit reddit"],
+      "Open a website in the browser. Use for a spelled-out address AND for a well-known site named directly, such as YouTube, GitHub, Gmail or Reddit — those are websites, not installed applications. Also when the user names the browser to use, as in 'open YouTube in Chrome'.",
+    examples: ["go to github dot com", "open example.com", "open youtube", "visit reddit", "open youtube in chrome"],
     slots: { url: textSlot("The web address", extractUrl) },
-    async run({ url }, os) {
-      await os.openUrl(url);
-      return { detail: `Opened ${url}` };
+    async run({ url }, os, ctx) {
+      const browser = await browserFor(os, ctx);
+      await os.openUrl(url, browser ?? undefined);
+      return { detail: `Opened ${url}`, app: browser ?? ctx.defaultBrowser };
     },
   }),
 
   web_search: action({
     describe:
-      "Search the internet for information. Use whenever the user wants to look something up online, including phrasings like 'search for', rather than searching inside the current document.",
-    examples: ["search for typescript generics", "google the weather", "look up pasta recipes"],
+      "Search the internet, or search one particular site such as YouTube, GitHub, Amazon or Wikipedia. Use whenever the user wants to look something up online: 'search for …', 'google …', 'search YouTube for …', 'play … on YouTube'. Not for searching inside the current document.",
+    examples: [
+      "search for typescript generics",
+      "google the weather",
+      "look up pasta recipes",
+      "search youtube for cats",
+      "play lofi music on youtube",
+    ],
     slots: {
       query: textSlot("What to search for", (t) =>
-        afterPhrase(t, ["search the web for", "search for", "search", "google for", "google", "look up"]),
+        afterPhrase(withoutBrowser(t), [
+          "search the web for", "search for", "search", "google for", "google", "look up",
+          "find", "play", "watch", "listen to",
+        ]),
       ),
     },
-    async run({ query }, os) {
-      await os.webSearch(query);
-      return { detail: `Searched for "${query}"` };
+    async run({ query }, os, ctx) {
+      const plan = planSearch(withoutBrowser(ctx.transcript) || query, query, ctx.windowTitle);
+      const browser = await browserFor(os, ctx);
+      await os.openUrl(plan.url, browser ?? undefined);
+      const detail =
+        plan.kind === "site"
+          ? `Opened ${plan.label}`
+          : plan.label === "the web"
+            ? `Searched for "${plan.query}"`
+            : `Searched ${plan.label} for "${plan.query}"`;
+      return { detail, app: browser ?? ctx.defaultBrowser };
     },
   }),
 
   // --- capture -----------------------------------------------------------
   screenshot_screen: action({
-    describe: "Take a screenshot of the entire screen and save it to the Desktop.",
+    describe: "Take a screenshot of the entire screen and save it to the Desktop. A picture of the screen, not a photo from the camera.",
     examples: ["take a screenshot", "screenshot the screen", "capture the screen"],
     slots: {},
     async run(_a, os) {
@@ -683,6 +725,44 @@ export const ACTIONS = {
     async run(_a, os) {
       const file = await os.screenshot("window");
       return { detail: `Saved ${file.split("/").pop()}` };
+    },
+  }),
+
+  take_photo: action({
+    describe:
+      "Take a photo or a selfie with the Mac's camera right now, using Photo Booth: only when the user asks for a picture to be taken. To just open the camera, use the open-app command. A picture from the camera, not a screenshot of the screen.",
+    examples: ["take a photo", "take a selfie", "take a picture of me", "snap a photo"],
+    slots: {},
+    async run(_a, os) {
+      await os.takePhoto();
+      return { detail: "Taking a photo in Photo Booth", app: "Photo Booth" };
+    },
+  }),
+
+  // --- settings ----------------------------------------------------------
+  open_settings: action({
+    describe:
+      "Open System Settings, or one page of it such as Wi-Fi, Bluetooth, Displays, Sound, Battery, Notifications, Privacy & Security or Keyboard — including to turn Wi-Fi or Bluetooth on or off, which is done on that page.",
+    examples: ["open bluetooth settings", "open wifi settings", "show display settings", "open sound preferences", "open settings"],
+    slots: {
+      pane: enumSlot(
+        "Which page of System Settings",
+        () => [SETTINGS_HOME, ...SETTINGS_PANES.map((p) => p.label)],
+        (ctx) => {
+          const named = shortlistPanes(ctx.transcript);
+          return named.length > 0 ? named : [SETTINGS_HOME];
+        },
+      ),
+    },
+    async run({ pane }, os) {
+      if (pane === SETTINGS_HOME) {
+        await os.openApp("System Settings");
+        return { detail: "Opened System Settings", app: "System Settings" };
+      }
+      const page = paneByLabel(pane);
+      if (!page) throw new Error(`There is no settings page called ${pane}`);
+      await os.openSettingsPane(page.id);
+      return { detail: `Opened ${page.label} settings`, app: "System Settings" };
     },
   }),
 

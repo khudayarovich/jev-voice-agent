@@ -1,6 +1,6 @@
 {
   "name": "jev-voice-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "JVA — realtime voice control for macOS, routed by Jev (TypeSafe AI). Commands run as you finish speaking.",
   "private": true,
   "main": "dist/main/index.js",
@@ -30,7 +30,8 @@
     "dist": "bash scripts/setup.sh --only portable,vad,kws && npm run build && electron-builder --mac --arm64",
     "tail": "tail -f \"$HOME/Library/Application Support/jev-voice-agent/jev.log\"",
     "calibrate": "node --experimental-strip-types scripts/calibrate.mjs",
-    "bench": "node scripts/bench.mjs"
+    "bench": "node scripts/run-in-electron.mjs scripts/bench/main.ts",
+    "eval": "node scripts/run-in-electron.mjs scripts/eval/main.ts"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "0.6.0",

@@ -1,4 +1,5 @@
 import type { PlatformAdapter } from "../platform/types.ts";
+import { shortlistBy } from "./parse.ts";
 import { ACTIONS, type ActionKey } from "./registry.ts";
 import type { ActionContext, ActionResult } from "./types.ts";
 
@@ -59,6 +60,41 @@ export function readConfirmation(transcript: string): "yes" | "no" | "unclear" {
     return "no";
   }
   return "unclear";
+}
+
+export type Clarification = { kind: "pick"; value: string } | { kind: "cancel" } | { kind: "new" };
+
+/**
+ * The answer to "which one — Xcode or Cursor?".
+ *
+ *   pick    they chose one: by name, by position ("the second one"), or with a
+ *           yes to the first guess
+ *   cancel  they called it off
+ *   new     no answer at all but a different command, to be routed as usual
+ *
+ * `others` are further names worth accepting — every app, when the question
+ * was which app — and must be said outright. `otherCommand` says the words
+ * read as some other command ("open Safari"), which is never an answer.
+ */
+export function readClarification(
+  transcript: string,
+  options: string[],
+  others: string[],
+  otherCommand: boolean,
+): Clarification {
+  if (!otherCommand) {
+    const named = shortlistBy(transcript, options, 1, 0.5)[0] ?? shortlistBy(transcript, others, 1, 0.9)[0];
+    if (named) return { kind: "pick", value: named };
+  }
+  const t = transcript.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (t.split(" ").length <= 5) {
+    if (/\b(first|former)\b/.test(t) && options[0]) return { kind: "pick", value: options[0] };
+    if (/\b(second|last|latter|other)\b/.test(t) && options[1]) return { kind: "pick", value: options[1] };
+  }
+  const answer = readConfirmation(transcript);
+  if (answer === "yes" && options[0]) return { kind: "pick", value: options[0] };
+  if (answer === "no") return { kind: "cancel" };
+  return { kind: "new" };
 }
 
 /**

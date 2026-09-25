@@ -33,9 +33,10 @@ It lives in the menu bar. On first launch Settings opens, and the speech model
    Automation separately, per app, the first time a command needs it.
 
 Then say *"Hey Jeff, open Safari"*. Or *"Hey Jeff, set the volume to thirty
-percent"*, *"take a screenshot"*, *"open Notes and create a new note"*. Keep
-talking after the first command — no wake word needed until you say "that's it".
-The full list is under Settings → Commands.
+percent"*, *"take a selfie"*, *"search YouTube for lofi music"*, *"open
+Bluetooth settings"*, *"open Notes and create a new note"*. Keep talking after
+the first command — no wake word needed until you say "that's it". The full list
+is under Settings → Commands.
 
 If something seems off, this checks every part of the install without touching
 the microphone:
@@ -121,6 +122,35 @@ menu-bar icon shows sound waves the whole time it is still listening.
 The approach was inspired by Andy Gao's voice-controlled Mac built on Jev, where
 "the app opens before I even finish my sentence".
 
+### Understanding what you mean
+
+People describe more than they name, and they talk in a sequence, not in
+isolated commands. What real use turned up, and what the agent does about it:
+
+- **Describe it, don't name it.** Every installed app goes to Jev with a line
+  saying what it is for — Photo Booth is the camera app, Finder the file
+  manager, Activity Monitor the task manager — so *"open my camera"*, *"open the
+  password manager"* or *"open the file manager"* find the right one, including
+  apps you have never opened.
+- **One browser, the one you are using.** A link or a search opens in the
+  browser you named (*"open YouTube in Chrome"*), else the one in front, else the
+  one you just used, else one already open, and only then the system default.
+  *"The browser"* follows the same rule. *"Close all browsers"* means all of them.
+- **Sites, not searches for sites.** *"Search for youtube.com"* opens YouTube.
+  *"Search YouTube for cats"*, *"play lofi music on YouTube"* and *"look up pizza
+  on Google Maps"* go to that site's own search; *"search for cats there"* searches
+  the site in front.
+- **The camera and the settings.** *"Take a selfie"* opens Photo Booth and
+  presses its shutter (with its three-second countdown). *"Open Bluetooth
+  settings"*, *"turn on Wi-Fi"* or *"change my wallpaper"* open that page of System
+  Settings directly.
+- **It asks, and remembers asking.** When it cannot tell which app you meant, it
+  asks — *"Which one — Xcode or Cursor?"* — and your answer finishes the original
+  command. *"Quit Safari? Say yes to confirm."* names what it is about to do, and
+  answering with a different command does that command instead.
+- **Short-term memory.** Each request carries what the conversation just did, so
+  *"close it"* has something to refer to.
+
 Everything from the microphone to the transcript runs **on this machine**. Only
 the routing decision — a short transcript plus a small structured context
 object — is sent to Jev.
@@ -147,6 +177,7 @@ That is both why it is fast (70–500 ms, ~0.003¢ per command) and why it is sa
 - [x] **Phase 4** — Jev routing, typed executor, confirmations
 - [x] **Realtime** — streaming transcription, acting at the pause, chains mid-sentence
 - [x] **Installable app** — a DMG with a self-contained speech engine; the model downloads on first run
+- [x] **Understanding** — apps described, one browser, sites and site searches, camera and settings pages, clarifying questions
 - [ ] **Phase 5** — wider registry, native helper for hold-to-talk
 - [ ] **Phase 6** — Apple SpeechAnalyzer engine, notarization
 
@@ -176,7 +207,7 @@ Before the realtime work, the same machine logged 3.5–3.9 s from the end of
 |---|---|
 | Transcription, small.en + Metal | ~150 ms |
 | Jev routing, warm (network RTT here ~220 ms) | ~310 ms |
-| Cost | ~$0.08 per 1000 commands |
+| Cost | ~$0.08 per 1000 commands; about twice that when the request is about an app, since every installed app goes along, described |
 
 ### Routing accuracy
 
@@ -188,6 +219,16 @@ local matcher      96.0%  (the offline fallback, for comparison)
 confidence  hit   mean 0.980   p10 0.970
 latency           mean 489ms   p50 410ms   p95 1222ms
 tokens            1901 per command
+```
+
+`npm run eval` checks understanding on this Mac, with its real app list: 42
+requests that describe rather than name, involve browsers, or sit close to
+another command — including every one that went wrong in real use ("open selfie
+camera", "search for youtube.com", "close all browsers", "take a photo").
+Nothing is executed:
+
+```
+42/42 right   routing p50 307 ms   p90 637 ms   3980 input tokens per request
 ```
 
 Confidence is well separated: before the criteria were tightened, the two wrong
@@ -262,6 +303,7 @@ npm start           # build and launch
 npm test            # hermetic tests, no microphone or network needed
 npm run typecheck
 npm run bench       # realtime latency through the real pipeline (needs the API key)
+npm run eval        # does it understand? real requests against this Mac's apps (needs the API key)
 npm run calibrate   # routing accuracy against the live API (TYPESAFE_API_KEY=...)
 npm run assets      # regenerate the tray icons and indicator tones
 npm run tail        # follow the structured log while you talk to it

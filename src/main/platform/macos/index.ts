@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { app, clipboard } from "electron";
 import type { AppInfo, FocusContext, KeyCombo, PlatformAdapter } from "../types.ts";
+import { defaultBrowserId, parseMdls, parseMdlsDate } from "./launchservices.ts";
 import { parseDisplayName, parseForegroundApps } from "./lsappinfo.ts";
 import { asStr, osa, runAppleScript } from "./osascript.ts";
 
@@ -14,6 +15,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const APP_CACHE_MS = 60_000;
 /** The user's Shortcuts change even more rarely. */
 const AUTOMATION_CACHE_MS = 5 * 60_000;
+/** Where LaunchServices records which app opens which kind of link. */
+const LAUNCH_SERVICES_PREFS = "Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist";
 
 /**
  * macOS implementation.
@@ -44,9 +47,9 @@ function translatePermissionError(err: unknown, kind: "screenRecording" | "acces
       "Screen Recording permission is needed for screenshots. Grant it in Settings → Permissions.",
     );
   }
-  if (kind === "accessibility" && /not allowed to send keystrokes|1002/.test(text)) {
+  if (kind === "accessibility" && /not allowed to send keystrokes|assistive access|1002|-1719|-25211/.test(text)) {
     return new Error(
-      "Accessibility permission is needed to press keys. Grant it in Settings → Permissions.",
+      "Accessibility permission is needed to press keys and buttons. Grant it in Settings → Permissions.",
     );
   }
   return err instanceof Error ? err : new Error(text);
@@ -78,6 +81,7 @@ export class MacPlatform implements PlatformAdapter {
   private appRefresh: Promise<AppInfo[]> | null = null;
   private automationCache: { at: number; list: string[] } | null = null;
   private automationRefresh: Promise<string[]> | null = null;
+  private browserCache: { at: number; name: string } | null = null;
 
   // --- discovery ---------------------------------------------------------
 
@@ -132,47 +136,44 @@ export class MacPlatform implements PlatformAdapter {
       }
     }
     const apps = [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-    await this.attachLastUsed(apps);
+    await this.attachMetadata(apps);
     this.appCache = { at: Date.now(), apps };
     return apps;
   }
 
   /**
-   * Annotate apps with when they were last launched, via Spotlight.
+   * Annotate apps with their bundle id and when they were last launched, via
+   * Spotlight.
    *
-   * This is the ranking signal that makes the speech vocabulary prompt useful.
-   * whisper's prompt is bounded at a couple of hundred tokens, so on a Mac with
-   * a hundred apps the list has to be cut somewhere — and cutting it
-   * alphabetically drops Safari, Slack, Terminal and Xcode while keeping every
-   * utility beginning with "A". Recency is a far better predictor of what the
-   * user is about to say. One `mdls` call covers every app in about 70 ms.
+   * Last-launched is the ranking signal that makes the speech vocabulary
+   * prompt useful. whisper's prompt is bounded at a couple of hundred tokens,
+   * so on a Mac with a hundred apps the list has to be cut somewhere — and
+   * cutting it alphabetically drops Safari, Slack, Terminal and Xcode while
+   * keeping every utility beginning with "A". Recency is a far better
+   * predictor of what the user is about to say. The bundle id is how the
+   * default browser, which LaunchServices records by id, gets its name. One
+   * `mdls` call covers every app in about 70 ms.
    */
-  private async attachLastUsed(apps: AppInfo[]): Promise<void> {
+  private async attachMetadata(apps: AppInfo[]): Promise<void> {
     const paths = apps.map((a) => a.path).filter((p): p is string => Boolean(p));
     if (paths.length === 0) return;
     try {
       const { stdout } = await exec(
         "/usr/bin/mdls",
-        ["-name", "kMDItemLastUsedDate", "-name", "kMDItemFSName", ...paths],
+        ["-name", "kMDItemFSName", "-name", "kMDItemCFBundleIdentifier", "-name", "kMDItemLastUsedDate", ...paths],
         { timeout: 6000, maxBuffer: 8 * 1024 * 1024 },
       );
-      const byName = new Map<string, number>();
-      let currentName = "";
-      for (const line of stdout.split("\n")) {
-        const nameMatch = line.match(/kMDItemFSName\s*=\s*"(.+)\.app"/);
-        if (nameMatch?.[1]) {
-          currentName = nameMatch[1];
-          continue;
-        }
-        const dateMatch = line.match(/kMDItemLastUsedDate\s*=\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
-        if (dateMatch?.[1] && currentName) {
-          const ms = Date.parse(`${dateMatch[1].replace(" ", "T")}Z`);
-          if (Number.isFinite(ms)) byName.set(currentName, ms);
-        }
+      const byName = new Map<string, Record<string, string>>();
+      for (const record of parseMdls(stdout)) {
+        const file = record.kMDItemFSName;
+        if (file?.endsWith(".app")) byName.set(file.slice(0, -4), record);
       }
       for (const app of apps) {
-        const ms = byName.get(app.name);
-        if (ms !== undefined) app.lastUsed = ms;
+        const record = byName.get(app.name);
+        if (!record) continue;
+        if (record.kMDItemCFBundleIdentifier) app.id = record.kMDItemCFBundleIdentifier;
+        const lastUsed = parseMdlsDate(record.kMDItemLastUsedDate);
+        if (lastUsed !== undefined) app.lastUsed = lastUsed;
       }
     } catch {
       // Spotlight may be disabled or indexing; ranking simply falls back to
@@ -517,13 +518,36 @@ end tell`;
 
   // --- web & files -------------------------------------------------------
 
-  async openUrl(url: string): Promise<void> {
+  async openUrl(url: string, browser?: string): Promise<void> {
     const safe = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-    await exec("/usr/bin/open", [safe], { timeout: 6000 });
+    // `open -a` opens the link in that browser, launching it if need be;
+    // plain `open` hands it to whichever browser LaunchServices picks.
+    await exec("/usr/bin/open", browser ? ["-a", browser, safe] : [safe], { timeout: 6000 });
   }
 
-  async webSearch(query: string): Promise<void> {
-    await this.openUrl(`https://www.google.com/search?q=${encodeURIComponent(query)}`);
+  /**
+   * The browser links open in, by name. LaunchServices keeps the choice by
+   * bundle id in a preferences file; no entry means the user never changed
+   * it, and Safari is the default.
+   */
+  async defaultBrowser(): Promise<string> {
+    if (this.browserCache && Date.now() - this.browserCache.at < APP_CACHE_MS) return this.browserCache.name;
+    let name = "Safari";
+    try {
+      const { stdout } = await exec(
+        "/usr/bin/plutil",
+        ["-convert", "json", "-o", "-", path.join(app.getPath("home"), LAUNCH_SERVICES_PREFS)],
+        { timeout: 3000, maxBuffer: 8 * 1024 * 1024 },
+      );
+      const id = defaultBrowserId(JSON.parse(stdout))?.toLowerCase();
+      // Recorded in lower case ("com.google.chrome"); the bundle's own id is not.
+      const found = id ? (await this.listApps()).find((a) => a.id?.toLowerCase() === id) : undefined;
+      if (found) name = found.name;
+    } catch {
+      // No preferences file yet: nobody changed the default.
+    }
+    this.browserCache = { at: Date.now(), name };
+    return name;
   }
 
   async screenshot(mode: "screen" | "selection" | "window"): Promise<string> {
@@ -542,5 +566,50 @@ end tell`;
 
   async revealInFiles(target: string): Promise<void> {
     await exec("/usr/bin/open", ["-R", target], { timeout: 5000 });
+  }
+
+  // --- camera & settings -------------------------------------------------
+
+  /**
+   * Photo Booth is the Mac's camera app, and its Take Photo command runs the
+   * same three-second countdown as its shutter button — time to smile. The
+   * command stays disabled until the camera has started, so keep trying for a
+   * few seconds rather than failing on a cold start. It is found by name in
+   * whichever menu holds it.
+   */
+  async takePhoto(): Promise<void> {
+    await this.openApp("Photo Booth");
+    if (!(await this.waitForFrontmost((a) => a === "Photo Booth", 4000))) {
+      throw new Error("Photo Booth did not open");
+    }
+    const script = `
+tell application "System Events"
+  tell process "Photo Booth"
+    repeat 60 times
+      repeat with m in menu bar items of menu bar 1
+        try
+          set item_ to menu item "Take Photo" of menu 1 of m
+          if enabled of item_ then
+            click item_
+            return "taken"
+          end if
+        end try
+      end repeat
+      delay 0.1
+    end repeat
+  end tell
+end tell
+return "unavailable"`;
+    let out: string;
+    try {
+      out = await osa(script, { timeoutMs: 10_000 });
+    } catch (err) {
+      throw translatePermissionError(err, "accessibility");
+    }
+    if (out !== "taken") throw new Error("Photo Booth is open, but its camera did not start");
+  }
+
+  async openSettingsPane(id: string): Promise<void> {
+    await exec("/usr/bin/open", [`x-apple.systempreferences:${id}`], { timeout: 6000 });
   }
 }

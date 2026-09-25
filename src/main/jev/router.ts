@@ -1,8 +1,9 @@
 import { choice, noul, score } from "@typesafe-ai/sdk";
+import { ALL_BROWSERS } from "../actions/apps.ts";
 import { ACTIONS, ACTION_KEYS, type ActionKey, choiceCriteria } from "../actions/registry.ts";
 import { rankActions } from "../actions/rank.ts";
 import { NONE, type RouteDecision, offlineRoute, resolveLocalSlots } from "../actions/resolve.ts";
-import { planSlots, readSlots, slotCandidates } from "../actions/slots.ts";
+import { type SlotQuestion, appQuestion, planSlots, readSlots, slotCandidates } from "../actions/slots.ts";
 import type { ActionContext, EnumSlot, Slot } from "../actions/types.ts";
 import { describeError, getClient } from "./client.ts";
 export { offlineRoute, rankActions };
@@ -35,7 +36,8 @@ export type { RouteDecision };
  * description counts is what fixes it.
  */
 function slotQuestion(describe: string): string {
-  return `${describe}. The user may describe it rather than name it exactly — "the browser" means their web browser, "my editor" means their code editor. Pick the option that best fits what they meant.`;
+  const sentence = /[.!?]$/.test(describe) ? describe : `${describe}.`;
+  return `${sentence} The user may describe it rather than name it exactly. Pick the option that best fits what they meant.`;
 }
 
 const NONE_CRITERION =
@@ -48,11 +50,26 @@ const RISK_LEVELS = [
   "Destroys data permanently or interrupts the session, such as emptying the Trash or sleeping the machine.",
 ] as const;
 
-function slotChoice(describe: string, candidates: string[]) {
-  return choice(slotQuestion(describe), {
-    ...Object.fromEntries(candidates.map((c) => [c, null])),
+/** A slot question as a Choice: each candidate, described where it helps. */
+function slotChoice(q: SlotQuestion) {
+  return choice(slotQuestion(q.describe), {
+    ...Object.fromEntries(q.candidates.map((c) => [c, q.notes?.[c] ?? null])),
     [NONE]: NONE_CRITERION,
   });
+}
+
+/**
+ * What the request is judged against: the words, and a little app-built
+ * context. `recent_actions` is what this conversation has already done — so
+ * "close it" or "search for cats there" has something to refer to.
+ */
+function stateFor(ctx: ActionContext) {
+  return {
+    request: ctx.transcript,
+    focused_app: ctx.focusedApp || "unknown",
+    window_title: ctx.windowTitle || "",
+    ...(ctx.recent?.length ? { recent_actions: ctx.recent } : {}),
+  };
 }
 
 export interface RouteOptions {
@@ -64,7 +81,10 @@ export interface RouteOptions {
   signal?: AbortSignal;
 }
 
-type Answers = Record<string, { choice?: string; confidence?: number; noul?: number; score?: number }>;
+type Answers = Record<
+  string,
+  { choice?: string; confidence?: number; probabilities?: Record<string, number>; noul?: number; score?: number }
+>;
 
 export async function route(ctx: ActionContext, opts: RouteOptions): Promise<RouteDecision> {
   const client = getClient();
@@ -82,9 +102,7 @@ export async function route(ctx: ActionContext, opts: RouteOptions): Promise<Rou
       "The user is giving a command to their computer, rather than talking to another person or thinking out loud.",
     ),
     risk: score("How much damage would be done if this request were misunderstood?", RISK_LEVELS),
-    ...Object.fromEntries(
-      [...plan.questions].map(([id, q]) => [id, slotChoice(q.describe, q.candidates)]),
-    ),
+    ...Object.fromEntries([...plan.questions].map(([id, q]) => [id, slotChoice(q)])),
   };
 
   try {
@@ -93,14 +111,7 @@ export async function route(ctx: ActionContext, opts: RouteOptions): Promise<Rou
     // came from a web page, the clipboard, or the screen ever goes in here —
     // Jev is documented as steerable by instructions injected into its state.
     const res = await client.systemOne(
-      {
-        state: {
-          request: ctx.transcript,
-          focused_app: ctx.focusedApp || "unknown",
-          window_title: ctx.windowTitle || "",
-        },
-        questions,
-      },
+      { state: stateFor(ctx), questions },
       opts.signal ? { signal: opts.signal } : {},
     );
 
@@ -144,6 +155,8 @@ export async function route(ctx: ActionContext, opts: RouteOptions): Promise<Rou
     return {
       action: picked, args, confidence, addressed, risk, offline: false,
       ms: Date.now() - started, inputTokens,
+      ...(slots.confidence < 1 ? { slotConfidence: slots.confidence, unsureSlot: slots.unsure } : {}),
+      ...(slots.alternative ? { alternative: slots.alternative } : {}),
       ...(reason ? { reason } : {}),
     };
   } catch (err) {
@@ -181,25 +194,31 @@ async function resolveMissingSlots(
   for (const name of missing) {
     const slot = slots[name];
     if (!slot || slot.kind !== "enum") continue;
-    const { candidates } = await slotCandidates(slot as EnumSlot, ctx);
+    const enumSlot = slot as EnumSlot;
+    if (enumSlot.group === "app") {
+      questions[name] = slotChoice(appQuestion(ctx));
+      continue;
+    }
+    const { candidates } = await slotCandidates(enumSlot, ctx);
     if (candidates.length === 0) continue;
-    questions[name] = slotChoice(slot.describe, candidates);
+    questions[name] = slotChoice({ describe: enumSlot.describe, candidates });
   }
 
   if (!client || Object.keys(questions).length === 0) {
     return { args: {}, stillMissing: missing, inputTokens: 0 };
   }
 
-  const res = await client.systemOne(
-    { state: { request: ctx.transcript }, questions },
-    signal ? { signal } : {},
-  );
+  const res = await client.systemOne({ state: stateFor(ctx), questions }, signal ? { signal } : {});
   const answers = res.answers as Answers;
   const args: Record<string, string> = {};
   const stillMissing: string[] = [];
   for (const name of missing) {
     const answer = answers[name]?.choice;
-    if (answer && answer !== NONE) args[name] = answer;
+    const slot = slots[name] as EnumSlot | undefined;
+    // As in readSlots: never quit or hide an app that is not running.
+    const idle = slot?.requiresRunning && answer !== ALL_BROWSERS && ctx.runningApps.length > 0 &&
+      !ctx.runningApps.includes(answer ?? "");
+    if (answer && answer !== NONE && !idle) args[name] = answer;
     else stillMissing.push(name);
   }
   return { args, stillMissing, inputTokens: res.usage.input_tokens };

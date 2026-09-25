@@ -84,7 +84,77 @@ test("lifts free text verbatim rather than generating it", async () => {
 
   const { calls, os } = recorder();
   await execute(d.action!, d.args, os, ctx(phrase));
-  assert.deepEqual(calls, [{ method: "webSearch", args: ["typescript generics"] }]);
+  // In the browser already open, rather than launching the default one.
+  assert.deepEqual(calls.at(-1), {
+    method: "openUrl",
+    args: ["https://www.google.com/search?q=typescript%20generics", "Safari"],
+  });
+});
+
+test("a search opens in the browser the user is looking at", async () => {
+  // Observed in real use: "open my browser" opened Chrome, and the search
+  // after it opened in Safari, the default — a second browser.
+  const phrase = "search for youtube";
+  const c = ctx(phrase, { focusedApp: "Google Chrome", runningApps: ["Finder", "Safari", "Google Chrome"], defaultBrowser: "Safari" });
+  const d = offlineRoute(c);
+  assert.equal(d.action, "web_search");
+  const { calls, os } = recorder();
+  await execute(d.action!, d.args, os, c);
+  assert.deepEqual(calls.at(-1), { method: "openUrl", args: ["https://youtube.com", "Google Chrome"] });
+});
+
+test("a site named as the search opens the site itself", async () => {
+  const phrase = "search for youtube.com";
+  const d = offlineRoute(ctx(phrase));
+  const { calls, os } = recorder();
+  const r = await execute(d.action!, d.args, os, ctx(phrase));
+  assert.equal(calls.at(-1)?.args[0], "https://youtube.com");
+  assert.equal(r.detail, "Opened youtube.com");
+});
+
+test("a search on one site goes to that site's search", async () => {
+  const phrase = "search youtube for lofi music";
+  const d = offlineRoute(ctx(phrase));
+  assert.equal(d.action, "web_search");
+  const { calls, os } = recorder();
+  const r = await execute(d.action!, d.args, os, ctx(phrase));
+  assert.equal(calls.at(-1)?.args[0], "https://www.youtube.com/results?search_query=lofi%20music");
+  assert.equal(r.detail, 'Searched YouTube for "lofi music"');
+});
+
+test("a browser named in the request is the one used, and is not searched for", async () => {
+  const phrase = "search for cats in chrome";
+  const c = ctx(phrase, { installedApps: [...INSTALLED, "Google Chrome"] });
+  const d = offlineRoute(c);
+  assert.equal(d.args.query, "cats");
+  const { calls, os } = recorder();
+  await execute(d.action!, d.args, os, c);
+  assert.deepEqual(calls.at(-1), { method: "openUrl", args: ["https://www.google.com/search?q=cats", "Google Chrome"] });
+});
+
+test("a settings page opens directly", async () => {
+  const d = offlineRoute(ctx("open bluetooth settings"));
+  assert.equal(d.action, "open_settings");
+  assert.equal(d.args.pane, "Bluetooth");
+  const { calls, os } = recorder();
+  await execute(d.action!, d.args, os, ctx("open bluetooth settings"));
+  assert.deepEqual(calls, [{ method: "openSettingsPane", args: ["com.apple.BluetoothSettings"] }]);
+});
+
+test("taking a selfie uses the camera, not a screenshot", () => {
+  assert.equal(offlineRoute(ctx("take a selfie")).action, "take_photo");
+  assert.equal(offlineRoute(ctx("take a screenshot")).action, "screenshot_screen");
+});
+
+test("quitting every browser quits each open one", async () => {
+  const c = ctx("quit all browsers", { runningApps: ["Finder", "Safari", "Google Chrome"] });
+  const { calls, os } = recorder();
+  const r = await execute("quit_app", { app: "Every open web browser" }, os, c);
+  assert.deepEqual(calls, [
+    { method: "quitApp", args: ["Safari"] },
+    { method: "quitApp", args: ["Google Chrome"] },
+  ]);
+  assert.equal(r.detail, "Quit Safari and Google Chrome");
 });
 
 test("dictation types exactly what was said", async () => {

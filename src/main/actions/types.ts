@@ -19,6 +19,17 @@ export interface ActionContext {
   runningApps: string[];
   installedApps: string[];
   automations: string[];
+  /** The browser links open in by default, per LaunchServices. */
+  defaultBrowser?: string;
+  /**
+   * The browser the user was last using in this conversation. A search or a
+   * link opens there, not in whatever the system default happens to be —
+   * observed in real use: "open my browser" opened Chrome, and the search that
+   * followed opened a second browser.
+   */
+  lastBrowser?: string;
+  /** What was just done in this conversation, oldest first: "Opened Safari". */
+  recent?: string[];
 }
 
 /**
@@ -78,6 +89,11 @@ export type SlotValues<S extends Slots> = { [K in keyof S]: SlotValue<S[K]> };
 export interface ActionResult {
   /** Shown in the HUD and written to the activity log. */
   detail?: string;
+  /**
+   * The app the action ended up using — the browser a link opened in, the
+   * app that was opened. Remembered, so the next command uses it too.
+   */
+  app?: string;
 }
 
 export interface ActionDef<S extends Slots = Slots> {

@@ -2,9 +2,12 @@ import { globalShortcut } from "electron";
 import { randomUUID } from "node:crypto";
 import { IPC } from "../shared/ipc.ts";
 import type { AppSettings, CommandLogEntry } from "../shared/types.ts";
-import { execute, isDismissal, missingSlots, readConfirmation } from "./actions/execute.ts";
+import { ALL_BROWSERS, expandApps, isBrowser, listNames } from "./actions/apps.ts";
+import { execute, isDismissal, missingSlots, readClarification, readConfirmation } from "./actions/execute.ts";
+import { rankActions } from "./actions/rank.ts";
 import {
   ADDRESSED_MIN,
+  SLOT_CONFIDENCE_MIN,
   actsEarly,
   completedClauses,
   instantRoute,
@@ -12,8 +15,9 @@ import {
   stripLeadingConjunction,
 } from "./actions/realtime.ts";
 import { ACTIONS, type ActionKey } from "./actions/registry.ts";
+import { appUniverse } from "./actions/slots.ts";
 import { clauseTail, splitCommands } from "./actions/split.ts";
-import type { ActionContext } from "./actions/types.ts";
+import type { ActionContext, ActionResult } from "./actions/types.ts";
 import { downloadModel, isInstalled } from "./audio/download.ts";
 import { modelById } from "./audio/models.ts";
 import { AudioPipeline, type TriggerKind, type Utterance, VAD_HANGOVER_MS } from "./audio/pipeline.ts";
@@ -128,7 +132,9 @@ export function stopListening(): void {
   pipeline?.disarm();
   pipeline = null;
   pending = null;
+  clarifying = null;
   sessions.clear();
+  recent.length = 0;
   getCapture()?.webContents.send(IPC.captureStop);
   unregisterHotkey();
   hideHud();
@@ -228,7 +234,8 @@ function refreshEnv(): Promise<Env> {
     os.runningApps().catch(() => [] as string[]),
     os.listApps().catch(() => []),
     os.listAutomations().catch(() => [] as string[]),
-  ]).then(([focus, running, installed, automations]) => ({
+    os.defaultBrowser().catch(() => ""),
+  ]).then(([focus, running, installed, automations, defaultBrowser]) => ({
     focusedApp: focus.app,
     windowTitle: focus.windowTitle ?? "",
     runningApps: running,
@@ -238,6 +245,7 @@ function refreshEnv(): Promise<Env> {
       .sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0) || a.name.localeCompare(b.name))
       .map((a) => a.name),
     automations,
+    ...(defaultBrowser ? { defaultBrowser } : {}),
   }));
   env = { at: Date.now(), value };
   return value;
@@ -246,6 +254,47 @@ function refreshEnv(): Promise<Env> {
 function currentEnv(): Promise<Env> {
   if (env && Date.now() - env.at < 4000) return env.value;
   return refreshEnv();
+}
+
+// ---------------------------------------------------------------------------
+// What the conversation has done so far
+// ---------------------------------------------------------------------------
+
+/**
+ * The agent's short-term memory: what it just did, and the browser in use.
+ *
+ * Without it every command stood alone, and it showed: "open my browser"
+ * opened Chrome, then "search for YouTube" opened Safari, because the search
+ * had no idea a browser had just been opened. Commands now carry what was just
+ * done, in the context each one is decided and run with.
+ */
+const recent: { at: number; detail: string }[] = [];
+let lastBrowser: { name: string; at: number } | null = null;
+
+/** Actions older than this are not "just now" any more. */
+const RECENT_MS = 3 * 60_000;
+/** A browser last used longer ago than this counts only if it is still open. */
+const BROWSER_MEMORY_MS = 30 * 60_000;
+
+function remember(action: ActionKey, args: Record<string, string | number>, result: ActionResult, e: Env): void {
+  const now = Date.now();
+  recent.push({ at: now, detail: result.detail ?? phrase(action) });
+  while (recent.length > 4) recent.shift();
+  if (result.app && isBrowser(result.app)) lastBrowser = { name: result.app, at: now };
+  if (action === "quit_app" && lastBrowser && expandApps(String(args.app), e.runningApps).includes(lastBrowser.name)) {
+    lastBrowser = null;
+  }
+}
+
+/** The environment, plus what this conversation has already done. */
+function withMemory(e: Env): Env {
+  const now = Date.now();
+  const done = recent.filter((r) => now - r.at < RECENT_MS).map((r) => r.detail);
+  const browser =
+    lastBrowser && (now - lastBrowser.at < BROWSER_MEMORY_MS || e.runningApps.includes(lastBrowser.name))
+      ? lastBrowser.name
+      : undefined;
+  return { ...e, ...(done.length ? { recent: done } : {}), ...(browser ? { lastBrowser: browser } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +322,7 @@ function decide(clause: string, e: Env): Promise<RouteDecision> {
   if (hit && Date.now() - hit.at < 15_000) return hit.decision;
   for (const [k, v] of routes) if (Date.now() - v.at > 15_000) routes.delete(k);
 
-  const ctx: ActionContext = { ...e, transcript: clause };
+  const ctx: ActionContext = { ...withMemory(e), transcript: clause };
   const settings = getSettings();
   const instant = settings.instantCommands ? instantRoute(clause, ctx) : null;
   const decision = (instant
@@ -293,6 +342,8 @@ function decide(clause: string, e: Env): Promise<RouteDecision> {
         action: d.action,
         args: d.args,
         confidence: Number(d.confidence.toFixed(3)),
+        ...(d.slotConfidence !== undefined ? { slotConfidence: Number(d.slotConfidence.toFixed(3)) } : {}),
+        ...(d.alternative ? { alternative: d.alternative } : {}),
         addressed: Number(d.addressed.toFixed(3)),
         risk: Number(d.risk.toFixed(2)),
         offline: d.offline,
@@ -435,7 +486,18 @@ function wirePipeline(p: AudioPipeline): void {
 
   p.on("followUpEnded", (reason: string) => {
     fileLog("agent", "conversation-ended", { reason });
-    if (coordinator.getState() === "conversing") {
+    // A new conversation starts with a clean slate: "close it" in the next one
+    // must not reach back to what this one did.
+    recent.length = 0;
+    // A question nobody answered lapses with the conversation. Left pending, it
+    // kept the overlay asking "Quit Safari?" until the user next spoke.
+    if (pending || clarifying) {
+      fileLog("route", "question-unanswered", { action: pending?.action ?? clarifying?.decision.action });
+      pending = null;
+      clarifying = null;
+    }
+    const state = coordinator.getState();
+    if (state === "conversing" || state === "confirming") {
       coordinator.setState("idle");
       coordinator.setTranscript("", false);
       hideHud();
@@ -501,7 +563,7 @@ async function runEarly(
       s.halted = true;
       return;
     }
-    const r = await act(d, e, true);
+    const r = await act(d, e, true, clause);
     fileLog("agent", "ran-early", { clause, action: d.action, outcome: r.outcome, detail: r.detail });
     if (r.outcome !== "ok") {
       s.halted = true;
@@ -525,6 +587,23 @@ let pending: Pending | null = null;
 /** Confirmations go stale — never run something the user agreed to a minute ago. */
 const CONFIRM_WINDOW_MS = 15_000;
 
+/**
+ * A question about which one the user meant — "Xcode or Cursor?" — waiting
+ * for its answer. The answer ("Cursor") completes the original command
+ * rather than being taken as a new one: "quit my editor", then "Cursor", must
+ * quit Cursor, not open it.
+ */
+interface Clarifying {
+  decision: RouteDecision;
+  /** The slot being asked about, e.g. "app". */
+  slot: string;
+  options: string[];
+  transcript: string;
+  env: Env;
+  askedAt: number;
+}
+let clarifying: Clarifying | null = null;
+
 async function onUtterance(u: Utterance): Promise<void> {
   const s = sessionFor(u.captureId);
   const generation = ++s.generation;
@@ -539,11 +618,10 @@ async function onUtterance(u: Utterance): Promise<void> {
   });
   coordinator.setTranscript(u.transcript, !u.final);
 
-  // A pending destructive action takes priority over routing anything new.
-  if (pending) {
-    await answerConfirmation(u, s);
-    return;
-  }
+  // A question the agent asked takes priority over routing anything new —
+  // unless what was said is not an answer at all, but a new command.
+  if (pending && (await answerConfirmation(u, s))) return;
+  if (clarifying && (await answerClarification(u, s))) return;
 
   // "that's it, thank you" ends the conversation. Checked before routing: it is
   // instant, unambiguous, and sending it to the router would only invite it to
@@ -552,6 +630,7 @@ async function onUtterance(u: Utterance): Promise<void> {
     if (!(await claimNow(u, generation, s))) return;
     fileLog("agent", "dismissed", { said: u.transcript });
     pipeline?.closeFollowUp("dismissed");
+    recent.length = 0;
     finish(u, s, { outcome: "cancelled", action: null, detail: "Okay", decision: null }, { silent: false, conversation: "close" });
     return;
   }
@@ -622,21 +701,37 @@ async function runClauses(
 
   for (let i = 0; i < clauses.length; i++) {
     const d = decisions[i]!;
-    const r = await act(d, e, i < clauses.length - 1);
+    const r = await act(d, e, i < clauses.length - 1, clauses[i]!);
     last = r;
 
     if (r.confirm) {
       // Stop here rather than queueing the rest: asking "empty the Trash?" and
       // then silently running two more commands afterwards would be startling.
       s.finished = true;
-      pending = { ...r.confirm, ctx: { ...e, transcript: clauses[i]! }, transcript: clauses[i]!, askedAt: Date.now() };
-      coordinator.setState("confirming", `${phrase(r.confirm.action)}? Say yes to confirm.`);
+      const ctx = { ...withMemory(e), transcript: clauses[i]! };
+      clarifying = null;
+      pending = { ...r.confirm, ctx, transcript: clauses[i]!, askedAt: Date.now() };
+      const question = confirmQuestion(r.confirm.action, r.confirm.args, ctx);
+      coordinator.setState("confirming", `${question} Say yes to confirm.`);
       play("confirm");
       showHud();
       // Hold the conversation open, or answering "yes" would mean saying the
       // wake word again first - absurd for a question the agent just asked.
       openConversation(CONFIRM_WINDOW_MS);
-      fileLog("route", "awaiting-confirmation", { action: r.confirm.action });
+      fileLog("route", "awaiting-confirmation", { action: r.confirm.action, question });
+      return;
+    }
+
+    if (r.clarify) {
+      // Ask which one, and hold the conversation open for the answer.
+      s.finished = true;
+      pending = null;
+      clarifying = { decision: d, ...r.clarify, transcript: clauses[i]!, env: e, askedAt: Date.now() };
+      coordinator.setState("confirming", r.detail);
+      play("confirm");
+      showHud();
+      openConversation(CONFIRM_WINDOW_MS);
+      fileLog("route", "awaiting-clarification", { action: d.action, options: r.clarify.options });
       return;
     }
 
@@ -661,6 +756,8 @@ interface Outcome {
   decision: RouteDecision | null;
   /** Set when the action needs a spoken yes before it may run. */
   confirm?: { action: ActionKey; args: Record<string, string | number> };
+  /** Set when it is unclear which one the user meant: ask, with these options. */
+  clarify?: { slot: string; options: string[] };
   execMs?: number;
 }
 
@@ -675,7 +772,7 @@ function needsConfirmation(d: RouteDecision): boolean {
  * Turn one routing decision into an outcome: run it, refuse it, or ask first.
  * `more` says another clause follows, so wait for focus to settle.
  */
-async function act(d: RouteDecision, e: Env, more: boolean): Promise<Outcome> {
+async function act(d: RouteDecision, e: Env, more: boolean, clause: string): Promise<Outcome> {
   // Not addressed to the agent - most likely a false wake while the user was
   // talking to someone else.
   if (d.addressed < ADDRESSED_MIN) {
@@ -704,13 +801,29 @@ async function act(d: RouteDecision, e: Env, more: boolean): Promise<Outcome> {
       decision: d,
     };
   }
+  // The command is clear but which one is not: "open my code editor" with
+  // Xcode and Cursor both installed. Asking beats opening the wrong one.
+  if (d.slotConfidence !== undefined && d.slotConfidence < SLOT_CONFIDENCE_MIN) {
+    const slot = d.unsureSlot ?? "app";
+    const picked = String(d.args[slot] ?? "");
+    const options = [picked, d.alternative].filter((o): o is string => Boolean(o));
+    return {
+      outcome: "rejected",
+      action: d.action,
+      detail: options.length > 1 ? `Which one — ${options[0]} or ${options[1]}?` : `Did you mean ${picked}?`,
+      decision: d,
+      clarify: { slot, options },
+    };
+  }
   if (needsConfirmation(d)) {
     return {
       outcome: "cancelled", action: d.action, detail: "awaiting confirmation", decision: d,
       confirm: { action: d.action, args: d.args },
     };
   }
-  return run(d.action, d.args, { ...e, transcript: "" }, d, more);
+  // The words go along: "open YouTube in Chrome" names the browser, and
+  // "search YouTube for cats" the site, in words no slot holds.
+  return run(d.action, d.args, { ...withMemory(e), transcript: clause }, d, more);
 }
 
 async function run(
@@ -727,14 +840,15 @@ async function run(
   try {
     const result = await execute(action, args, os, ctx);
     const execMs = Date.now() - started;
-    fileLog("execute", "ok", { action, args, execMs });
+    fileLog("execute", "ok", { action, args, execMs, ...(result.app ? { app: result.app } : {}) });
     worldVersion++;
+    remember(action, args, result, ctx);
     // A couple of actions steer the agent itself rather than the OS.
     if (action === "stop_listening") stopListening();
     // Another command follows: let the app just opened actually come to the
     // front first, or "open Safari and open a new tab" sends its Cmd-T to
     // whatever was in front a moment ago.
-    if (more) await settleFocus(action, args, before);
+    if (more) await settleFocus(action, result.app, before);
     return { outcome: "ok", action, detail: result.detail ?? phrase(action), decision, execMs };
   } catch (err) {
     fileLog("execute", "failed", { action, args, message: describe(err) });
@@ -742,10 +856,12 @@ async function run(
   }
 }
 
-async function settleFocus(action: ActionKey, args: Record<string, string | number>, before: string): Promise<void> {
+async function settleFocus(action: ActionKey, app: string | undefined, before: string): Promise<void> {
   const os = platform();
-  if (action === "open_app" || action === "close_app_window") {
-    await os.waitForFrontmost((a) => a === args.app, 1500);
+  if (app) {
+    // The app it opened or used, whichever that was: a browser for a link, the
+    // app itself for "open", Photo Booth for a photo. Already in front: done.
+    if (app !== before) await os.waitForFrontmost((a) => a === app, 1500);
   } else if (action === "open_url" || action === "web_search") {
     // The browser comes forward — unless it already was in front.
     await os.waitForFrontmost((a) => a !== before, 600);
@@ -753,14 +869,20 @@ async function settleFocus(action: ActionKey, args: Record<string, string | numb
   void refreshEnv();
 }
 
-async function answerConfirmation(u: Utterance, s: Session): Promise<void> {
+/**
+ * Settle the question the agent asked. Returns false when what was said is no
+ * answer but a new command, which the caller then routes as usual.
+ */
+async function answerConfirmation(u: Utterance, s: Session): Promise<boolean> {
   const held = pending!;
   const generation = s.generation;
 
   if (Date.now() - held.askedAt > CONFIRM_WINDOW_MS) {
     pending = null;
+    // Too late to be an answer. A new command is still a command, though.
+    if (readConfirmation(u.transcript) === "unclear" && rankActions(u.transcript, 1).length > 0) return false;
     finish(u, s, { outcome: "cancelled", action: held.action, detail: "Confirmation expired", decision: null });
-    return;
+    return true;
   }
 
   let answer = readConfirmation(u.transcript);
@@ -772,8 +894,8 @@ async function answerConfirmation(u: Utterance, s: Session): Promise<void> {
   // A clear yes or no can be taken at the first pause. Anything else waits for
   // the end of what they are saying — they may still be getting to the point.
   const ok = answer !== "unclear" ? await claimNow(u, generation, s) : await claim(u, generation, s);
-  if (!ok) return;
-  if (pending !== held) return;
+  if (!ok) return true;
+  if (pending !== held) return true;
   pending = null;
 
   fileLog("route", "confirmation", { action: held.action, answer, said: u.transcript });
@@ -782,14 +904,89 @@ async function answerConfirmation(u: Utterance, s: Session): Promise<void> {
     const r = await serially(() => run(held.action, held.args, held.ctx, null, false));
     const stops = held.action === "stop_listening" || held.action === "cancel";
     finish(u, s, r, { conversation: stops ? "close" : "open" });
-    return;
+    return true;
   }
-  // Anything that is not a clear yes is a no. Silence, a mumble, or a brand new
-  // command all mean "do not do the destructive thing".
+  // A different command instead of an answer. Observed in real use: asked to
+  // confirm quitting, the user said "close the browser" — which meant do that
+  // instead, and was swallowed as "not confirmed". The destructive thing still
+  // does not happen; the new command gets routed like any other.
+  if (answer === "unclear" && rankActions(u.transcript, 1).length > 0) {
+    fileLog("route", "confirmation-superseded", { action: held.action, said: u.transcript });
+    return false;
+  }
+  // Anything else that is not a clear yes is a no: silence, a mumble.
   finish(u, s, {
     outcome: "cancelled", action: held.action,
     detail: answer === "no" ? "Cancelled" : "Not confirmed", decision: null,
   });
+  return true;
+}
+
+/**
+ * Settle "which one did you mean?". Returns false when what was said is no
+ * answer but a new command, which the caller then routes as usual.
+ */
+async function answerClarification(u: Utterance, s: Session): Promise<boolean> {
+  const held = clarifying!;
+  const generation = s.generation;
+  if (Date.now() - held.askedAt > CONFIRM_WINDOW_MS) {
+    clarifying = null;
+    return false;
+  }
+
+  const top = rankActions(u.transcript, 1)[0];
+  const others = held.slot === "app" ? appUniverse(held.env) : [];
+  const answer = readClarification(u.transcript, held.options, others, top !== undefined && top !== held.decision.action);
+  if (answer.kind === "new") {
+    clarifying = null;
+    fileLog("route", "clarification-superseded", { action: held.decision.action, said: u.transcript });
+    return false;
+  }
+
+  if (!(await claimNow(u, generation, s))) return true;
+  if (clarifying !== held) return true;
+  clarifying = null;
+  fileLog("route", "clarification", {
+    action: held.decision.action,
+    answer: answer.kind === "pick" ? answer.value : "cancel",
+    said: u.transcript,
+  });
+
+  if (answer.kind === "cancel") {
+    finish(u, s, { outcome: "cancelled", action: held.decision.action, detail: "Cancelled", decision: null });
+    return true;
+  }
+  // Routing checked this for the app it guessed; the one chosen now needs the
+  // same check, or "quit" would launch an app just to quit it.
+  const action = held.decision.action!;
+  const slot = (ACTIONS[action].slots as Record<string, { requiresRunning?: boolean }>)[held.slot];
+  const running = held.env.runningApps;
+  if (slot?.requiresRunning && answer.value !== ALL_BROWSERS && running.length > 0 && !running.includes(answer.value)) {
+    finish(u, s, { outcome: "rejected", action, detail: `${answer.value} isn't running`, decision: null });
+    return true;
+  }
+  // The original command, with the blank filled in. It still goes through
+  // every check — a quit still asks "are you sure?".
+  const { slotConfidence: _c, unsureSlot: _s, alternative: _a, ...rest } = held.decision;
+  const d: RouteDecision = { ...rest, args: { ...held.decision.args, [held.slot]: answer.value } };
+  await serially(() => runClauses(u, s, [held.transcript], [d], held.env, false));
+  return true;
+}
+
+/** What the agent asks before a destructive action, naming what it would do. */
+function confirmQuestion(action: ActionKey, args: Record<string, string | number>, ctx: ActionContext): string {
+  const app = typeof args.app === "string" ? args.app : "";
+  const apps = app ? listNames(expandApps(app, ctx.runningApps)) : "";
+  switch (action) {
+    case "quit_app":
+      return app === ALL_BROWSERS ? `Quit every open browser — ${apps}?` : `Quit ${apps}?`;
+    case "empty_trash":
+      return "Empty the Trash? This can't be undone.";
+    case "sleep_system":
+      return "Put the Mac to sleep?";
+    default:
+      return `${phrase(action)}${apps ? ` — ${apps}` : ""}?`;
+  }
 }
 
 /** Is this utterance essentially the request we are already asking about? */

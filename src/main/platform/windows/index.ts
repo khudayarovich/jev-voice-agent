@@ -87,7 +87,10 @@ export class WindowsPlatform implements PlatformAdapter {
   scroll(): Promise<void> { this.nope("Scrolling"); }
 
   openUrl(): Promise<void> { this.nope("Opening URLs"); }
-  webSearch(): Promise<void> { this.nope("Web search"); }
+  defaultBrowser(): Promise<string> { this.nope("Finding the default browser"); }
   screenshot(): Promise<string> { this.nope("Screenshots"); }
   revealInFiles(): Promise<void> { this.nope("Revealing files"); }
+
+  takePhoto(): Promise<void> { this.nope("Taking photos"); }
+  openSettingsPane(): Promise<void> { this.nope("Opening settings pages"); }
 }

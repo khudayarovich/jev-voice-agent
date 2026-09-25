@@ -1,5 +1,3 @@
-import { ACTIONS, ACTION_KEYS } from "../actions/registry.ts";
-
 /**
  * Builds whisper's initial prompt.
  *
@@ -16,6 +14,23 @@ import { ACTIONS, ACTION_KEYS } from "../actions/registry.ts";
 
 /** whisper's prompt is bounded; keep well inside it. */
 const MAX_PROMPT_CHARS = 900;
+
+/**
+ * A few representative phrasings, so the model expects the shape of an
+ * instruction rather than of prose — chosen for the words the recogniser gets
+ * wrong without a hint. With app names alone in the prompt, "take a photo"
+ * came out as "take a Phone" (Phone being an app) and opened the Phone app.
+ * Kept short: every character here is one fewer app name that fits.
+ */
+const PHRASINGS = [
+  "Open Safari",
+  "Take a photo",
+  "Take a screenshot",
+  "Search YouTube for cats",
+  "Open Bluetooth settings",
+  "Set the volume to 30 percent",
+  "Close the browser",
+];
 
 export interface VocabularyApp {
   name: string;
@@ -55,13 +70,6 @@ export function buildVocabularyPrompt(
     })
     .map((a) => a.name);
 
-  // A few representative phrasings, so the model expects the shape of an
-  // instruction rather than of prose. Kept short: every character here is one
-  // fewer app name that fits.
-  const phrasings = ACTION_KEYS.slice(0, 8)
-    .map((k) => ACTIONS[k].examples[0])
-    .filter((e): e is string => Boolean(e));
-
   /**
    * Structure matters as much as content.
    *
@@ -72,7 +80,7 @@ export function buildVocabularyPrompt(
    * shape to continue instead.
    */
   const head = "Voice commands for a Mac. Installed applications include: ";
-  const tail = ` Examples: ${phrasings.join(". ")}.`;
+  const tail = ` Examples: ${PHRASINGS.join(". ")}.`;
 
   const parts: string[] = [];
   for (const app of apps) {

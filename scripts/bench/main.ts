@@ -35,17 +35,20 @@ app.setName("jev-voice-agent");
 // Paths inside the app resolve against the project, not this script's folder.
 (app as unknown as { getAppPath: () => string }).getAppPath = () => ROOT;
 
+/** Commands, each said after the wake phrase from Settings. */
 const CASES: { text: string; expect: string[] }[] = [
-  { text: "Hey Jeff, open Safari.", expect: ["open_app"] },
-  { text: "Hey Jeff, open Telegram.", expect: ["open_app"] },
-  { text: "Hey Jeff, mute.", expect: ["mute"] },
-  { text: "Hey Jeff, set the volume to thirty percent.", expect: ["set_volume"] },
-  { text: "Hey Jeff, open YouTube.", expect: ["open_url"] },
-  { text: "Hey Jeff, turn on dark mode.", expect: ["dark_mode_on"] },
-  { text: "Hey Jeff, open the browser.", expect: ["open_app"] },
-  { text: "Hey Jeff, search for TypeScript generics.", expect: ["web_search"] },
-  { text: "Hey Jeff, take a screenshot.", expect: ["screenshot_screen"] },
-  { text: "Hey Jeff, open Notes and create a new note.", expect: ["open_app", "new_window"] },
+  { text: "Open Safari.", expect: ["open_app"] },
+  { text: "Open Telegram.", expect: ["open_app"] },
+  { text: "Mute.", expect: ["mute"] },
+  { text: "Set the volume to thirty percent.", expect: ["set_volume"] },
+  { text: "Open YouTube.", expect: ["open_url"] },
+  { text: "Turn on dark mode.", expect: ["dark_mode_on"] },
+  { text: "Open the browser.", expect: ["open_app"] },
+  { text: "Search for TypeScript generics.", expect: ["web_search"] },
+  { text: "Take a screenshot.", expect: ["screenshot_screen"] },
+  { text: "Open Notes and create a new note.", expect: ["open_app", "new_window"] },
+  { text: "Take a photo.", expect: ["take_photo"] },
+  { text: "Open my camera.", expect: ["open_app"] },
 ];
 const VOICES = (process.env.BENCH_VOICES ?? "Samantha,Daniel").split(",");
 /** BENCH_ONLY=volume runs just the cases containing that text; BENCH_TRACE=1 prints the pipeline's trace. */
@@ -97,12 +100,18 @@ async function main(): Promise<void> {
 
   const dir = path.join(app.getPath("temp"), "jev-bench");
   mkdirSync(dir, { recursive: true });
+  // Said with the wake phrase the app is actually listening for: with the
+  // default one hard-coded, every clip was ignored once the user changed it.
+  const wake = settings.wakeWords[0] ?? "hey jeff";
+  const lead = wake.charAt(0).toUpperCase() + wake.slice(1);
   const clips: { voice: string; text: string; expect: string[]; file: string }[] = [];
   for (const voice of VOICES) {
-    for (const [i, c] of CASES.entries()) {
+    for (const c of CASES) {
       if (ONLY && !c.text.toLowerCase().includes(ONLY)) continue;
-      const file = path.join(dir, `${voice}-${i}.wav`);
-      if (!existsSync(file)) execFileSync("/usr/bin/say", ["-v", voice, "-o", file, "--data-format=LEI16@16000", c.text]);
+      const spoken = `${lead}, ${c.text.charAt(0).toLowerCase()}${c.text.slice(1)}`;
+      const slug = spoken.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const file = path.join(dir, `${voice}-${slug}.wav`);
+      if (!existsSync(file)) execFileSync("/usr/bin/say", ["-v", voice, "-o", file, "--data-format=LEI16@16000", spoken]);
       clips.push({ voice, ...c, file });
     }
   }
@@ -219,7 +228,7 @@ async function main(): Promise<void> {
     const actions = acted.map((a) => a.action);
     rows.push({
       voice: clip.voice,
-      said: clip.text.replace(/^Hey Jeff, /, ""),
+      said: clip.text,
       heard,
       actions: actions.join(" + ") || "—",
       ok: clip.expect.every((e, i) => actions[i] === e),
