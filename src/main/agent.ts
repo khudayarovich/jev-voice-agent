@@ -3,25 +3,41 @@ import { randomUUID } from "node:crypto";
 import { IPC } from "../shared/ipc.ts";
 import type { AppSettings, CommandLogEntry } from "../shared/types.ts";
 import { execute, isDismissal, missingSlots, readConfirmation } from "./actions/execute.ts";
+import {
+  ADDRESSED_MIN,
+  actsEarly,
+  completedClauses,
+  instantRoute,
+  isIncomplete,
+  stripLeadingConjunction,
+} from "./actions/realtime.ts";
 import { ACTIONS, type ActionKey } from "./actions/registry.ts";
-import { splitCommands } from "./actions/split.ts";
+import { clauseTail, splitCommands } from "./actions/split.ts";
 import type { ActionContext } from "./actions/types.ts";
-import { AudioPipeline, type CommandAudio, type TriggerKind } from "./audio/pipeline.ts";
-import { type RouteDecision, route } from "./jev/router.ts";
-import { platform } from "./platform/index.ts";
+import { AudioPipeline, type TriggerKind, type Utterance, VAD_HANGOVER_MS } from "./audio/pipeline.ts";
 import { Vad } from "./audio/vad.ts";
+import { buildVocabularyPrompt } from "./audio/vocabulary.ts";
 import { WakeWord } from "./audio/wake.ts";
 import { WhisperEngine } from "./audio/whisper.ts";
-import { buildVocabularyPrompt } from "./audio/vocabulary.ts";
 import { coordinator } from "./coordinator.ts";
 import { isSelfAudioActive, play } from "./earcons.ts";
+import * as jev from "./jev/client.ts";
+import { type RouteDecision, route } from "./jev/router.ts";
 import { log as fileLog } from "./log.ts";
+import { platform } from "./platform/index.ts";
 import { getSettings } from "./settings-store.ts";
 import { createCapture, getCapture, hideHud, showHud } from "./windows.ts";
 
 /**
- * Owns the listening lifecycle: the speech engine, the pipeline, the hotkey, and
- * the mapping from pipeline events onto coordinator state.
+ * Owns the listening lifecycle — the speech engine, the pipeline, the hotkey —
+ * and turns what the user says into actions, as early as it safely can.
+ *
+ * The pipeline hands over an utterance the moment the user pauses. This routes
+ * it straight away (context gathered while they were still talking, the
+ * connection to Jev already warm), and if the answer is a complete, confident
+ * command it runs it then and there, without waiting for the silence to be
+ * long enough to be sure they are done. Finished clauses of a chain run even
+ * earlier, while the rest is still being said.
  */
 
 let speech: WhisperEngine | null = null;
@@ -48,6 +64,8 @@ async function doStart(): Promise<void> {
   const settings = getSettings();
   fileLog("agent", "starting", { wakeWords: settings.wakeWords, hotkey: settings.hotkey });
   coordinator.setState("thinking", "Starting speech engine…");
+  // The first command should not pay for the TLS handshake either.
+  jev.warm();
 
   try {
     // A model change means a different server process, so rebuild rather than
@@ -66,7 +84,7 @@ async function doStart(): Promise<void> {
     return;
   }
 
-  const vad = new Vad({ minSilence: 0.7, minSpeech: 0.25, maxSpeech: 12 });
+  const vad = new Vad({ minSilence: VAD_HANGOVER_MS / 1000, minSpeech: 0.25, maxSpeech: 20 });
   pipeline = new AudioPipeline(
     {
       speech,
@@ -86,6 +104,7 @@ async function doStart(): Promise<void> {
   // it more than halved word error rate, because nearly every failure is a
   // proper noun — an app name the model had no reason to consider.
   void primeVocabulary();
+  void refreshEnv();
 
   createCapture();
   // The capture window may still be loading; retry until it takes the message.
@@ -95,6 +114,8 @@ async function doStart(): Promise<void> {
   fileLog("agent", "armed", {
     wakeAvailable: pipeline.wakeAvailable,
     unsupportedPhrases: pipeline.unsupportedWakePhrases,
+    streaming: pipeline.streaming,
+    engineMs: Math.round(speech.typicalMs),
   });
   coordinator.setListening(true);
   coordinator.setState("idle");
@@ -103,6 +124,8 @@ async function doStart(): Promise<void> {
 export function stopListening(): void {
   pipeline?.disarm();
   pipeline = null;
+  pending = null;
+  sessions.clear();
   getCapture()?.webContents.send(IPC.captureStop);
   unregisterHotkey();
   hideHud();
@@ -154,8 +177,154 @@ async function sendCaptureStart(deviceId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline → coordinator
+// What is in front of the user
 // ---------------------------------------------------------------------------
+
+/** Everything the router needs except the words themselves. */
+type Env = Omit<ActionContext, "transcript">;
+
+let env: { at: number; value: Promise<Env> } | null = null;
+
+/**
+ * Gather context now, so it is ready when the transcript is.
+ *
+ * Called when a command starts and again when the user pauses: the four
+ * lookups run while they are still talking, instead of after, where they used
+ * to add ~330 ms to every command. All of them are tolerant of failure — a
+ * missing grant must degrade the context, never block the command.
+ *
+ * Everything here is gathered by this app from the OS. Nothing that came from a
+ * web page, the clipboard, or the screen goes anywhere near it — Jev is
+ * documented as steerable by instructions injected into its state.
+ */
+function refreshEnv(): Promise<Env> {
+  const os = platform();
+  const value = Promise.all([
+    os.focus().catch(() => ({ app: "", windowTitle: "" })),
+    os.runningApps().catch(() => [] as string[]),
+    os.listApps().catch(() => []),
+    os.listAutomations().catch(() => [] as string[]),
+  ]).then(([focus, running, installed, automations]) => ({
+    focusedApp: focus.app,
+    windowTitle: focus.windowTitle ?? "",
+    runningApps: running,
+    // Most recently used first: when nothing was named and the router has to
+    // offer a list, the likely answers should be at the top of it.
+    installedApps: [...installed]
+      .sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0) || a.name.localeCompare(b.name))
+      .map((a) => a.name),
+    automations,
+  }));
+  env = { at: Date.now(), value };
+  return value;
+}
+
+function currentEnv(): Promise<Env> {
+  if (env && Date.now() - env.at < 4000) return env.value;
+  return refreshEnv();
+}
+
+// ---------------------------------------------------------------------------
+// Routing, cached
+// ---------------------------------------------------------------------------
+
+/**
+ * Bumps whenever an action runs, since that can change what is in front — a
+ * decision made before "open Safari" ran is not necessarily right after it.
+ */
+let worldVersion = 0;
+const routes = new Map<string, { at: number; decision: Promise<RouteDecision> }>();
+
+const normalize = (s: string) =>
+  s.toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+
+/**
+ * Route one clause — once. The same words heard at a pause and again at the
+ * end of the utterance share one request, so the answer is usually already
+ * here by the time the utterance is known to be over.
+ */
+function decide(clause: string, e: Env): Promise<RouteDecision> {
+  const key = `${worldVersion}|${normalize(clause)}`;
+  const hit = routes.get(key);
+  if (hit && Date.now() - hit.at < 15_000) return hit.decision;
+  for (const [k, v] of routes) if (Date.now() - v.at > 15_000) routes.delete(k);
+
+  const ctx: ActionContext = { ...e, transcript: clause };
+  const settings = getSettings();
+  const instant = settings.instantCommands ? instantRoute(clause, ctx) : null;
+  const decision = (instant
+    ? Promise.resolve(instant)
+    : route(ctx, {
+        confidenceThreshold: settings.confidenceThreshold,
+        offlineFallback: settings.offlineFallback,
+      })
+  )
+    .catch((err): RouteDecision => ({
+      action: null, args: {}, confidence: 0, addressed: 1, risk: 0,
+      offline: false, ms: 0, inputTokens: 0, reason: describe(err),
+    }))
+    .then((d) => {
+      fileLog("route", "decision", {
+        transcript: clause,
+        action: d.action,
+        args: d.args,
+        confidence: Number(d.confidence.toFixed(3)),
+        addressed: Number(d.addressed.toFixed(3)),
+        risk: Number(d.risk.toFixed(2)),
+        offline: d.offline,
+        instant: d.instant ?? false,
+        routeMs: d.ms,
+        inputTokens: d.inputTokens,
+        reason: d.reason,
+      });
+      return d;
+    });
+  routes.set(key, { at: Date.now(), decision });
+  return decision;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline → actions
+// ---------------------------------------------------------------------------
+
+/** One capture's worth of commands. */
+interface Session {
+  id: number;
+  /** Clauses already run from partial transcripts, mid-sentence. */
+  ran: string[];
+  /** How many completed clauses have been claimed for early running. */
+  claimed: number;
+  /** Early clause runs still in progress. */
+  early: Promise<void>[];
+  /** Stop running clauses early: one failed, or needs a yes, or was unsure. */
+  halted: boolean;
+  /** Only the newest utterance of a capture may act. */
+  generation: number;
+  finished: boolean;
+}
+const sessions = new Map<number, Session>();
+
+function sessionFor(id: number): Session {
+  let s = sessions.get(id);
+  if (!s) {
+    s = { id, ran: [], claimed: 0, early: [], halted: false, generation: 0, finished: false };
+    sessions.set(id, s);
+    // Captures are short-lived; keep only the recent ones.
+    for (const old of sessions.keys()) if (old < id - 8) sessions.delete(old);
+  }
+  return s;
+}
+
+/** Executions happen one at a time, in the order they were decided. */
+let queue: Promise<unknown> = Promise.resolve();
+function serially<T>(fn: () => Promise<T>): Promise<T> {
+  const next = queue.then(fn, fn);
+  queue = next.catch(() => undefined);
+  return next;
+}
+
+/** Bumps on every new capture, so a stale "back to idle" timer cannot hide it. */
+let hudEpoch = 0;
 
 function wirePipeline(p: AudioPipeline): void {
   p.on("level", (level) => coordinator.setLevel(level));
@@ -173,21 +342,38 @@ function wirePipeline(p: AudioPipeline): void {
     }
   });
 
+  // Someone started talking. It may not be for us, but opening the connection
+  // costs nothing and saves a handshake if it is.
+  p.on("capture", () => jev.warm());
+
   p.on("trigger", (kind: TriggerKind) => {
     fileLog("pipeline", "trigger", { kind });
-    play("wake");
+    hudEpoch++;
+    void refreshEnv();
+    jev.warm();
+    // Only the hotkey gets a cue here: after a wake word the user is usually
+    // still talking, and a tone over their words helps nobody.
+    if (kind === "hotkey") play("wake");
     showHud();
     coordinator.setTranscript("", false);
     coordinator.setState(
       "listening",
-      kind === "wake" ? "Listening…" : kind === "hotkey" ? "Listening (hotkey)…" : "Go ahead…",
+      kind === "hotkey" ? "Listening (hotkey)…" : kind === "followup" ? "Go ahead…" : "Listening…",
     );
   });
 
+  p.on("partial", ({ captureId, transcript }) => {
+    coordinator.setTranscript(transcript, true);
+    const s = sessionFor(captureId);
+    runFinishedClauses(s, transcript);
+    routeAhead(s, transcript);
+  });
+
+  // They paused: look at the screen again now, while the pause is transcribed.
+  p.on("pause", () => void refreshEnv());
+
   p.on("endpoint", () => {
     fileLog("pipeline", "endpoint");
-    play("endpoint");
-    coordinator.setState("thinking", "Transcribing…");
   });
 
   p.on("cancelled", (reason) => {
@@ -196,11 +382,12 @@ function wirePipeline(p: AudioPipeline): void {
     // while armed, the agent transcribes anything it hears and simply discards
     // what does not open with the wake phrase. It must do that silently.
     const routine = reason === "no speech" || reason === "not addressed" || reason === "too short";
-    if (coordinator.getState() !== "conversing" || !routine) {
-      coordinator.setState(p.inFollowUp ? "conversing" : "idle");
-      coordinator.setTranscript("", false);
-      if (!p.inFollowUp) hideHud();
-    }
+    // A dropped speculative capture was never on screen, and must not clear the
+    // result of the command that is.
+    if (routine && coordinator.getState() !== "listening") return;
+    coordinator.setState(p.inFollowUp ? "conversing" : "idle");
+    coordinator.setTranscript("", false);
+    if (!p.inFollowUp) hideHud();
     if (!routine) play("cancel");
   });
 
@@ -210,7 +397,7 @@ function wirePipeline(p: AudioPipeline): void {
     play("wake");
     openConversation();
     coordinator.setTranscript("", false);
-    coordinator.setState("conversing", "Go ahead\u2026");
+    coordinator.setState("conversing", "Go ahead…");
     showHud();
   });
 
@@ -231,7 +418,74 @@ function wirePipeline(p: AudioPipeline): void {
     }
   });
 
-  p.on("command", (cmd: CommandAudio) => void handleCommand(cmd));
+  p.on("utterance", (u: Utterance) => {
+    void onUtterance(u).catch((err) => fileLog("agent", "utterance-failed", { message: describe(err) }));
+  });
+}
+
+/**
+ * Run the finished clauses of a chain while the rest is still being said.
+ *
+ * "open Notes and create a new note": the moment a partial transcript shows
+ * "open Notes and …", Notes opens. Only clauses followed by more speech count,
+ * and only confident, harmless ones run — anything else stops early running for
+ * this capture, and the whole utterance is judged normally at the end.
+ */
+function runFinishedClauses(s: Session, partial: string): void {
+  if (!getSettings().realtime || s.halted || s.finished || pending) return;
+  const done = completedClauses(partial);
+  for (let i = s.claimed; i < done.length; i++) {
+    const clause = done[i]!;
+    s.claimed = i + 1;
+    // Routed at once, in parallel with anything before it — but run strictly
+    // after it. A later clause that routes faster (an instant command behind
+    // one waiting on Jev) must not overtake: "open Safari and go to GitHub"
+    // would otherwise go to GitHub first.
+    const decided = currentEnv().then((e) => decide(clause, e).then((d) => ({ d, e })));
+    const previous = s.early.at(-1) ?? Promise.resolve();
+    s.early.push(previous.then(() => runEarly(s, clause, decided)));
+  }
+}
+
+/**
+ * Start routing what has been said so far, before the user stops.
+ *
+ * A partial transcript is often already the whole command — "set the volume to
+ * 30%" is complete a beat before the speaker falls silent. Routing it now means
+ * the answer is waiting when the pause's transcription confirms the same words,
+ * instead of the ~300 ms round trip starting only then. Words that sound
+ * unfinished are not worth a request.
+ */
+function routeAhead(s: Session, partial: string): void {
+  if (!getSettings().realtime || s.finished || pending) return;
+  const text = s.ran.length ? clauseTail(partial, s.ran.length) : stripLeadingConjunction(partial);
+  if (!text || isIncomplete(text)) return;
+  void currentEnv().then((e) => {
+    for (const clause of splitCommands(text)) void decide(clause, e);
+  });
+}
+
+async function runEarly(
+  s: Session,
+  clause: string,
+  decided: Promise<{ d: RouteDecision; e: Env }>,
+): Promise<void> {
+  const { d, e } = await decided;
+  await serially(async () => {
+    if (s.halted || s.finished) return;
+    if (!actsEarly(d, clause, getSettings().confidenceThreshold) || needsConfirmation(d)) {
+      s.halted = true;
+      return;
+    }
+    const r = await act(d, e, true);
+    fileLog("agent", "ran-early", { clause, action: d.action, outcome: r.outcome, detail: r.detail });
+    if (r.outcome !== "ok") {
+      s.halted = true;
+      return;
+    }
+    s.ran.push(r.detail);
+    coordinator.setState("executing", r.detail);
+  });
 }
 
 /** A destructive action waiting for the user to say yes. */
@@ -239,6 +493,7 @@ interface Pending {
   action: ActionKey;
   args: Record<string, string | number>;
   ctx: ActionContext;
+  transcript: string;
   askedAt: number;
 }
 let pending: Pending | null = null;
@@ -246,256 +501,271 @@ let pending: Pending | null = null;
 /** Confirmations go stale — never run something the user agreed to a minute ago. */
 const CONFIRM_WINDOW_MS = 15_000;
 
-/**
- * Context handed to the router.
- *
- * Everything here is gathered by this app from the OS. Nothing that came from a
- * web page, the clipboard, or the screen goes anywhere near it — Jev is
- * documented as steerable by instructions injected into its state.
- */
-async function buildContext(transcript: string): Promise<ActionContext> {
-  const os = platform();
-  // In parallel, and every one of them tolerant of failure: these call out to
-  // System Events, which needs an Automation grant the user may not have given
-  // yet. A missing grant must degrade the context, never block the command.
-  const [focus, running, installed, automations] = await Promise.all([
-    os.focus().catch(() => ({ app: "", windowTitle: "" })),
-    os.runningApps().catch(() => [] as string[]),
-    os.listApps().catch(() => []),
-    os.listAutomations().catch(() => [] as string[]),
-  ]);
-  return {
-    transcript,
-    focusedApp: focus.app,
-    windowTitle: focus.windowTitle ?? "",
-    runningApps: running,
-    installedApps: installed.map((a) => a.name),
-    automations,
-  };
+async function onUtterance(u: Utterance): Promise<void> {
+  const s = sessionFor(u.captureId);
+  const generation = ++s.generation;
+  hudEpoch++;
+  fileLog("pipeline", "utterance", {
+    transcript: u.transcript,
+    raw: u.raw,
+    trigger: u.trigger,
+    final: u.final,
+    transcribeMs: u.transcribeMs,
+    durationSec: Number(u.durationSec.toFixed(2)),
+  });
+  coordinator.setTranscript(u.transcript, !u.final);
+
+  // A pending destructive action takes priority over routing anything new.
+  if (pending) {
+    await answerConfirmation(u, s);
+    return;
+  }
+
+  // "that's it, thank you" ends the conversation. Checked before routing: it is
+  // instant, unambiguous, and sending it to the router would only invite it to
+  // be read as some command or other.
+  if (pipeline?.inFollowUp && isDismissal(u.transcript)) {
+    if (!(await claimNow(u, generation, s))) return;
+    fileLog("agent", "dismissed", { said: u.transcript });
+    pipeline?.closeFollowUp("dismissed");
+    finish(u, s, { outcome: "cancelled", action: null, detail: "Okay", decision: null }, { silent: false, conversation: "close" });
+    return;
+  }
+
+  // Clauses already run mid-sentence are not run again.
+  await Promise.all(s.early);
+  if (generation !== s.generation || s.finished) return;
+  const text = s.ran.length ? clauseTail(u.transcript, s.ran.length) : stripLeadingConjunction(u.transcript);
+  const clauses = text ? splitCommands(text) : [];
+
+  if (clauses.length === 0) {
+    if (!(await claim(u, generation, s))) return;
+    if (s.ran.length) finish(u, s, { outcome: "ok", action: null, detail: s.ran.join(", "), decision: null });
+    else finish(u, s, { outcome: "rejected", action: null, detail: "Nothing to do", decision: null });
+    return;
+  }
+  if (clauses.length > 1) fileLog("route", "split", { parts: clauses });
+  if (u.final) coordinator.setState("thinking", "Working out what you meant…");
+
+  const e = await currentEnv();
+  const decisions = await Promise.all(clauses.map((c) => decide(c, e)));
+  if (generation !== s.generation || s.finished) return;
+
+  // Act now, or wait for the silence to say they are done?
+  const now =
+    getSettings().realtime &&
+    !u.final &&
+    clauses.every((c, i) => actsEarly(decisions[i]!, c, getSettings().confidenceThreshold));
+  if (now) {
+    // False when they have already started talking again: a longer utterance
+    // is on its way, and it will reuse these routes if the words match.
+    if (!u.commit()) return;
+  } else if (!(await claim(u, generation, s))) {
+    return;
+  }
+
+  await serially(() => runClauses(u, s, clauses, decisions, e, now));
 }
 
-/** What routing one piece of a request produced. */
+/**
+ * Wait until the utterance is known to be over — the silence ran out — and
+ * make sure it is still the one to act on. False means the user went on
+ * speaking and a longer utterance has replaced it.
+ */
+async function claim(u: Utterance, generation: number, s: Session): Promise<boolean> {
+  if (!u.final && (await u.settled) !== "final") return false;
+  return generation === s.generation && !s.finished;
+}
+
+/** Take it at this pause if they are still quiet; otherwise wait as `claim` does. */
+async function claimNow(u: Utterance, generation: number, s: Session): Promise<boolean> {
+  if (u.commit()) return generation === s.generation && !s.finished;
+  return claim(u, generation, s);
+}
+
+/** Run the decided clauses in order; stop at the first that does not succeed. */
+async function runClauses(
+  u: Utterance,
+  s: Session,
+  clauses: string[],
+  decisions: RouteDecision[],
+  e: Env,
+  early: boolean,
+): Promise<void> {
+  if (s.finished) return;
+  const done = [...s.ran];
+  let last: Outcome | null = null;
+
+  for (let i = 0; i < clauses.length; i++) {
+    const d = decisions[i]!;
+    const r = await act(d, e, i < clauses.length - 1);
+    last = r;
+
+    if (r.confirm) {
+      // Stop here rather than queueing the rest: asking "empty the Trash?" and
+      // then silently running two more commands afterwards would be startling.
+      s.finished = true;
+      pending = { ...r.confirm, ctx: { ...e, transcript: clauses[i]! }, transcript: clauses[i]!, askedAt: Date.now() };
+      coordinator.setState("confirming", `${phrase(r.confirm.action)}? Say yes to confirm.`);
+      play("confirm");
+      showHud();
+      // Hold the conversation open, or answering "yes" would mean saying the
+      // wake word again first - absurd for a question the agent just asked.
+      openConversation(CONFIRM_WINDOW_MS);
+      fileLog("route", "awaiting-confirmation", { action: r.confirm.action });
+      return;
+    }
+
+    if (r.outcome !== "ok") {
+      // Report what did run before the failure, so a half-done chain is visible.
+      const detail = done.length ? `${done.join(", ")} — then: ${r.detail}` : r.detail;
+      const quiet = r.outcome === "cancelled" && !done.length;
+      finish(u, s, { ...r, detail }, { silent: quiet, conversation: quiet ? "leave" : "open", early });
+      return;
+    }
+    done.push(r.detail);
+  }
+
+  finish(u, s, { outcome: "ok", action: last?.action ?? null, detail: done.join(", ") || "Done", decision: last?.decision ?? null }, { early });
+}
+
+/** What acting on one decision produced. */
 interface Outcome {
   outcome: "ok" | "rejected" | "failed" | "cancelled";
   action: ActionKey | null;
   detail: string;
   decision: RouteDecision | null;
   /** Set when the action needs a spoken yes before it may run. */
-  confirm?: { action: ActionKey; args: Record<string, string | number>; ctx: ActionContext };
+  confirm?: { action: ActionKey; args: Record<string, string | number> };
+  execMs?: number;
 }
 
-async function handleCommand(cmd: CommandAudio): Promise<void> {
-  const started = Date.now();
-  fileLog("pipeline", "command", {
-    transcript: cmd.transcript,
-    raw: cmd.raw,
-    trigger: cmd.trigger,
-    transcribeMs: cmd.transcribeMs,
-    durationSec: Number(cmd.durationSec.toFixed(2)),
-  });
-  coordinator.setTranscript(cmd.transcript, false);
-
-  // A pending destructive action takes priority over routing anything new.
-  if (pending) {
-    await resolveConfirmation(cmd, started);
-    return;
-  }
-
-  // "that's it, thank you" ends the conversation. Checked here, before routing:
-  // it is instant, unambiguous, and sending it to the router would only invite
-  // it to be read as some command or other.
-  if (pipeline?.inFollowUp && isDismissal(cmd.transcript)) {
-    fileLog("agent", "dismissed", { said: cmd.transcript });
-    pipeline.closeFollowUp("dismissed");
-    finish("cancelled", cmd, null, null, "Okay", started, cmd.transcribeMs, 0, false, 0, "close");
-    return;
-  }
-
-  coordinator.setState("thinking", "Working out what you meant\u2026");
-
-  // People chain instructions - "open Firefox and open YouTube" - and doing
-  // only the first half is simply not doing what was asked.
-  const parts = splitCommands(cmd.transcript);
-  if (parts.length > 1) fileLog("route", "split", { parts });
-
-  const done: string[] = [];
-  let routeMs = 0;
-  let last: Outcome | null = null;
-
-  for (const part of parts) {
-    const result = await routeOne(part, started);
-    routeMs += result.decision?.ms ?? 0;
-    last = result;
-
-    if (result.confirm) {
-      // Stop here rather than queueing the rest: asking "empty the Trash?" and
-      // then silently running two more commands afterwards would be startling.
-      pending = { ...result.confirm, askedAt: Date.now() };
-      coordinator.setState("confirming", `${phrase(result.confirm.action)}? Say yes to confirm.`);
-      play("confirm");
-      showHud();
-      // Hold the conversation open, or answering "yes" would mean saying the
-      // wake word again first - absurd for a question the agent just asked.
-      openConversation(CONFIRM_WINDOW_MS);
-      fileLog("route", "awaiting-confirmation", { action: result.confirm.action });
-      return;
-    }
-
-    if (result.outcome !== "ok") {
-      // Report what did run before the failure, so a half-done chain is visible.
-      const detail = done.length ? `${done.join(", ")} \u2014 then: ${result.detail}` : result.detail;
-      finish(result.outcome, cmd, result.decision, result.action, detail, started,
-             cmd.transcribeMs, routeMs, result.outcome === "cancelled" && !done.length,
-             0, result.outcome === "cancelled" && !done.length ? "leave" : "open");
-      return;
-    }
-    done.push(result.detail);
-  }
-
-  finish("ok", cmd, last?.decision ?? null, last?.action ?? null,
-         done.join(", ") || "Done", started, cmd.transcribeMs, routeMs);
+function needsConfirmation(d: RouteDecision): boolean {
+  if (!d.action || !getSettings().confirmDestructive) return false;
+  // Gated on BOTH the registry flag and the model's own read of how much damage
+  // a misunderstanding would do.
+  return ACTIONS[d.action].destructive === true || d.risk >= 2.5;
 }
 
-/** Route one command and run it, without touching the HUD or earcons. */
-async function routeOne(text: string, started: number): Promise<Outcome> {
-  let decision: RouteDecision;
-  let ctx: ActionContext;
-  try {
-    ctx = await buildContext(text);
-    decision = await route(ctx, { confidenceThreshold: getSettings().confidenceThreshold });
-  } catch (err) {
-    fileLog("route", "threw", { message: describe(err) });
-    return { outcome: "failed", action: null, detail: describe(err), decision: null };
-  }
-
-  fileLog("route", "decision", {
-    transcript: text,
-    action: decision.action,
-    args: decision.args,
-    confidence: Number(decision.confidence.toFixed(3)),
-    addressed: Number(decision.addressed.toFixed(3)),
-    risk: Number(decision.risk.toFixed(2)),
-    offline: decision.offline,
-    routeMs: decision.ms,
-    inputTokens: decision.inputTokens,
-    reason: decision.reason,
-  });
-
+/**
+ * Turn one routing decision into an outcome: run it, refuse it, or ask first.
+ * `more` says another clause follows, so wait for focus to settle.
+ */
+async function act(d: RouteDecision, e: Env, more: boolean): Promise<Outcome> {
   // Not addressed to the agent - most likely a false wake while the user was
   // talking to someone else.
-  if (decision.addressed < 0.35) {
-    return { outcome: "cancelled", action: null, detail: "not addressed to the agent", decision };
+  if (d.addressed < ADDRESSED_MIN) {
+    return { outcome: "cancelled", action: null, detail: "not addressed to the agent", decision: d };
   }
-  if (!decision.action) {
-    return { outcome: "rejected", action: null, detail: decision.reason ?? "No matching command", decision };
+  if (!d.action) {
+    return { outcome: "rejected", action: null, detail: sentence(d.reason) ?? "No matching command", decision: d };
   }
-
-  const missing = missingSlots(decision.action, decision.args);
+  const missing = missingSlots(d.action, d.args);
   if (missing.length > 0) {
     return {
       outcome: "rejected",
-      action: decision.action,
-      detail: `Could not work out the ${missing.join(" and ")}`,
-      decision,
+      action: d.action,
+      detail: sentence(d.reason) ?? `Could not work out the ${missing.join(" and ")}`,
+      decision: d,
     };
   }
-
   // Confidence gate. Jev reports calibrated confidence, and a 50-command
   // calibration run put correct answers at a mean of 0.98 and wrong ones at
   // 0.53 - so this threshold is a real dial, not a guess.
-  if (decision.confidence < getSettings().confidenceThreshold) {
+  if (d.confidence < getSettings().confidenceThreshold) {
     return {
       outcome: "rejected",
-      action: decision.action,
-      detail: `Not sure enough \u2014 did you mean to ${phrase(decision.action).toLowerCase()}?`,
-      decision,
+      action: d.action,
+      detail: `Not sure enough — did you mean to ${phrase(d.action).toLowerCase()}?`,
+      decision: d,
     };
   }
-
-  // Destructive actions need a spoken yes, gated on BOTH the registry flag and
-  // the model's own read of how much damage a misunderstanding would do.
-  const dangerous = ACTIONS[decision.action].destructive === true || decision.risk >= 2.5;
-  if (dangerous && getSettings().confirmDestructive) {
+  if (needsConfirmation(d)) {
     return {
-      outcome: "cancelled",
-      action: decision.action,
-      detail: "awaiting confirmation",
-      decision,
-      confirm: { action: decision.action, args: decision.args, ctx },
+      outcome: "cancelled", action: d.action, detail: "awaiting confirmation", decision: d,
+      confirm: { action: d.action, args: d.args },
     };
   }
+  return run(d.action, d.args, { ...e, transcript: "" }, d, more);
+}
 
-  coordinator.setState("executing", phrase(decision.action));
-  const execStarted = Date.now();
+async function run(
+  action: ActionKey,
+  args: Record<string, string | number>,
+  ctx: ActionContext,
+  decision: RouteDecision | null,
+  more: boolean,
+): Promise<Outcome> {
+  coordinator.setState("executing", phrase(action));
+  const os = platform();
+  const started = Date.now();
+  const before = more ? await os.frontApp().catch(() => "") : "";
   try {
-    const result = await execute(decision.action, decision.args, platform(), ctx);
-    const execMs = Date.now() - execStarted;
-    fileLog("execute", "ok", { action: decision.action, args: decision.args, execMs });
-    if (decision.action === "stop_listening") stopListening();
-    return {
-      outcome: "ok",
-      action: decision.action,
-      detail: result.detail ?? phrase(decision.action),
-      decision,
-    };
+    const result = await execute(action, args, os, ctx);
+    const execMs = Date.now() - started;
+    fileLog("execute", "ok", { action, args, execMs });
+    worldVersion++;
+    // A couple of actions steer the agent itself rather than the OS.
+    if (action === "stop_listening") stopListening();
+    // Another command follows: let the app just opened actually come to the
+    // front first, or "open Safari and open a new tab" sends its Cmd-T to
+    // whatever was in front a moment ago.
+    if (more) await settleFocus(action, args, before);
+    return { outcome: "ok", action, detail: result.detail ?? phrase(action), decision, execMs };
   } catch (err) {
-    fileLog("execute", "failed", { action: decision.action, args: decision.args, message: describe(err) });
-    return { outcome: "failed", action: decision.action, detail: describe(err), decision };
+    fileLog("execute", "failed", { action, args, message: describe(err) });
+    return { outcome: "failed", action, detail: describe(err), decision };
   }
 }
 
-async function resolveConfirmation(cmd: CommandAudio, started: number): Promise<void> {
+async function settleFocus(action: ActionKey, args: Record<string, string | number>, before: string): Promise<void> {
+  const os = platform();
+  if (action === "open_app" || action === "close_app_window") {
+    await os.waitForFrontmost((a) => a === args.app, 1500);
+  } else if (action === "open_url" || action === "web_search") {
+    // The browser comes forward — unless it already was in front.
+    await os.waitForFrontmost((a) => a !== before, 600);
+  }
+  void refreshEnv();
+}
+
+async function answerConfirmation(u: Utterance, s: Session): Promise<void> {
   const held = pending!;
-  pending = null;
+  const generation = s.generation;
 
   if (Date.now() - held.askedAt > CONFIRM_WINDOW_MS) {
-    finish("cancelled", cmd, null, held.action, "Confirmation expired", started, cmd.transcribeMs, 0);
+    pending = null;
+    finish(u, s, { outcome: "cancelled", action: held.action, detail: "Confirmation expired", decision: null });
     return;
   }
 
-  let answer = readConfirmation(cmd.transcript);
-
+  let answer = readConfirmation(u.transcript);
   // Saying the same thing again is how people insist. Observed in real use:
   // asked "Quit app? Say yes to confirm", the reply was the original command
   // repeated, which read as "unclear" and cancelled. Repetition is agreement.
-  if (answer === "unclear" && repeatsRequest(cmd.transcript, held)) answer = "yes";
+  if (answer === "unclear" && repeatsRequest(u.transcript, held)) answer = "yes";
 
-  fileLog("route", "confirmation", { action: held.action, answer, said: cmd.transcript });
+  // A clear yes or no can be taken at the first pause. Anything else waits for
+  // the end of what they are saying — they may still be getting to the point.
+  const ok = answer !== "unclear" ? await claimNow(u, generation, s) : await claim(u, generation, s);
+  if (!ok) return;
+  if (pending !== held) return;
+  pending = null;
+
+  fileLog("route", "confirmation", { action: held.action, answer, said: u.transcript });
 
   if (answer === "yes") {
-    await runAction(held.action, held.args, held.ctx, cmd, null, started);
+    const r = await serially(() => run(held.action, held.args, held.ctx, null, false));
+    const stops = held.action === "stop_listening" || held.action === "cancel";
+    finish(u, s, r, { conversation: stops ? "close" : "open" });
     return;
   }
   // Anything that is not a clear yes is a no. Silence, a mumble, or a brand new
   // command all mean "do not do the destructive thing".
-  finish("cancelled", cmd, null, held.action, answer === "no" ? "Cancelled" : "Not confirmed", started, cmd.transcribeMs, 0);
-}
-
-async function runAction(
-  action: ActionKey,
-  args: Record<string, string | number>,
-  ctx: ActionContext,
-  cmd: CommandAudio,
-  decision: RouteDecision | null,
-  started: number,
-): Promise<void> {
-  coordinator.setState("executing", phrase(action));
-  const execStarted = Date.now();
-  try {
-    const result = await execute(action, args, platform(), ctx);
-    const execMs = Date.now() - execStarted;
-    fileLog("execute", "ok", { action, args, execMs });
-
-    // A couple of actions steer the agent itself rather than the OS.
-    const stops = action === "stop_listening" || action === "cancel";
-    if (action === "stop_listening") stopListening();
-
-    finish("ok", cmd, decision, action, result.detail ?? phrase(action), started, cmd.transcribeMs,
-           decision?.ms ?? 0, false, execMs, stops ? "close" : "open");
-  } catch (err) {
-    fileLog("execute", "failed", { action, args, message: describe(err) });
-    finish("failed", cmd, decision, action, describe(err), started, cmd.transcribeMs, decision?.ms ?? 0);
-  }
+  finish(u, s, {
+    outcome: "cancelled", action: held.action,
+    detail: answer === "no" ? "Cancelled" : "Not confirmed", decision: null,
+  });
 }
 
 /** Is this utterance essentially the request we are already asking about? */
@@ -503,7 +773,7 @@ function repeatsRequest(transcript: string, held: Pending): boolean {
   const said = transcript.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
   if (!said) return false;
   const words = new Set(said.split(" ").filter((w) => w.length > 2));
-  const original = held.ctx.transcript
+  const original = held.transcript
     .toLowerCase()
     .replace(/[^a-z\s]/g, " ")
     .split(/\s+/)
@@ -518,46 +788,63 @@ function phrase(action: ActionKey): string {
   return action.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
+/** "photoshop isn't running" → "Photoshop isn't running". */
+function sentence(reason: string | undefined): string | undefined {
+  if (!reason || reason === "low confidence") return undefined;
+  return reason.charAt(0).toUpperCase() + reason.slice(1);
+}
+
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Single exit point: earcon, HUD, activity log, and return to idle. */
+/** Single exit point: earcon, HUD, activity log, and what happens next. */
 function finish(
-  outcome: "ok" | "rejected" | "failed" | "cancelled",
-  cmd: CommandAudio,
-  decision: RouteDecision | null,
-  action: ActionKey | null,
-  detail: string,
-  started: number,
-  transcribeMs: number,
-  routeMs: number,
-  silent = false,
-  execMs = 0,
-  /**
-   * What to do with the conversation afterwards.
-   *  open  — keep listening for another command (the normal case)
-   *  close — the user dismissed us, or turned listening off
-   *  leave — a false trigger: do not open a window, do not close an open one
-   */
-  conversation: "open" | "close" | "leave" = "open",
+  u: Utterance,
+  s: Session,
+  r: Outcome,
+  opts: {
+    silent?: boolean;
+    /**
+     * What to do with the conversation afterwards.
+     *  open  — keep listening for another command (the normal case)
+     *  close — the user dismissed us, or turned listening off
+     *  leave — a false trigger: do not open a window, do not close an open one
+     */
+    conversation?: "open" | "close" | "leave";
+    early?: boolean;
+  } = {},
 ): void {
-  if (!silent) play(outcome === "ok" ? "success" : outcome === "cancelled" ? "cancel" : "error");
-  coordinator.setState(outcome === "ok" ? "executing" : outcome === "failed" ? "error" : "idle", detail);
-  fileLog("agent", "finish", { outcome, action, detail });
+  s.finished = true;
+  const { outcome, action, detail, decision } = r;
+  const conversation =
+    opts.conversation ?? (action === "stop_listening" || action === "cancel" ? "close" : "open");
+
+  if (!opts.silent) play(outcome === "ok" ? "success" : outcome === "cancelled" ? "cancel" : "error");
+  const afterSpeech = Date.now() - u.speechEndedAt;
+  // Show how quickly it happened: the whole point of acting in real time is
+  // that it should feel instant, and a number makes that visible.
+  const meta = outcome !== "ok" ? "" : afterSpeech <= 0 ? "early" : `${(afterSpeech / 1000).toFixed(1)} s`;
+  coordinator.setState(outcome === "ok" ? "executing" : outcome === "failed" ? "error" : "idle", detail, {
+    meta,
+    result: outcome,
+  });
+  fileLog("agent", "finish", { outcome, action, detail, afterSpeechMs: afterSpeech, early: Boolean(opts.early) });
 
   log({
-    transcript: cmd.transcript,
+    transcript: u.transcript,
     action,
     confidence: decision?.confidence ?? null,
     offline: decision?.offline ?? false,
+    ...(decision?.instant ? { instant: true } : {}),
+    ...(opts.early || s.ran.length ? { early: true } : {}),
     outcome,
     detail,
     timings: {
-      transcribe: transcribeMs,
-      route: routeMs,
-      execute: execMs,
-      total: Date.now() - started + transcribeMs,
+      transcribe: u.transcribeMs,
+      route: decision?.ms ?? 0,
+      execute: r.execMs ?? 0,
+      afterSpeech,
     },
     ...(decision?.inputTokens ? { inputTokens: decision.inputTokens } : {}),
   });
@@ -565,21 +852,23 @@ function finish(
   if (conversation === "open") openConversation();
   else if (conversation === "close") pipeline?.closeFollowUp("finished");
 
+  const epoch = hudEpoch;
   setTimeout(
     () => {
-      if (coordinator.getState() === "confirming") return; // a new prompt took over
+      // Something newer took over the overlay: a question, or the next command.
+      if (epoch !== hudEpoch || coordinator.getState() === "confirming") return;
       coordinator.setTranscript("", false);
       if (pipeline?.inFollowUp) {
         // Stay visible and say so. The user needs to know the microphone is
         // still live without having to guess.
-        coordinator.setState("conversing", "Listening — say \u201cthat\u2019s it\u201d when you\u2019re done");
+        coordinator.setState("conversing", "Listening — say “that’s it” when you’re done");
         showHud();
         return;
       }
       coordinator.setState("idle");
       hideHud();
     },
-    outcome === "ok" ? 1600 : 2600,
+    outcome === "ok" ? 1400 : 2600,
   );
 }
 
@@ -628,9 +917,9 @@ function registerHotkey(accelerator: string): void {
       else p.begin("hotkey");
     });
     registeredHotkey = ok ? accelerator : "";
-    if (!ok) console.error("[hotkey] another app already owns", accelerator);
+    if (!ok) fileLog("hotkey", "taken", { accelerator });
   } catch (err) {
-    console.error("[hotkey] invalid accelerator", accelerator, err);
+    fileLog("hotkey", "invalid", { accelerator, message: describe(err) });
     registeredHotkey = "";
   }
 }

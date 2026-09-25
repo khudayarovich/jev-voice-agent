@@ -34,6 +34,14 @@ export interface PlatformAdapter {
   listApps(): Promise<AppInfo[]>;
   runningApps(): Promise<string[]>;
   focus(): Promise<FocusContext>;
+  /** Just the frontmost app's name — cheaper than `focus()`. */
+  frontApp(): Promise<string>;
+  /**
+   * Resolve true once the frontmost app passes `test`, false on timeout. Used
+   * between chained commands, so "open Safari and open a new tab" sends its
+   * Cmd-T to Safari rather than to whatever was in front a moment ago.
+   */
+  waitForFrontmost(test: (app: string) => boolean, timeoutMs: number): Promise<boolean>;
   /** User-authored automations that become voice-callable for free. */
   listAutomations(): Promise<string[]>;
 

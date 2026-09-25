@@ -23,11 +23,26 @@ import { SAMPLE_RATE, encodeWav } from "./wav.ts";
  * must happen at startup, never on the user's first spoken command.
  */
 
+export interface TranscribeOptions {
+  /**
+   * Abandon the request. whisper-server notices the closed connection and stops
+   * decoding, which is what makes speculative passes cheap to throw away when
+   * the user turns out to still be talking.
+   */
+  signal?: AbortSignal;
+}
+
 export interface SpeechEngine {
   start(): Promise<void>;
   stop(): void;
-  transcribe(samples: Float32Array): Promise<string>;
+  transcribe(samples: Float32Array, opts?: TranscribeOptions): Promise<string>;
   isReady(): boolean;
+  /**
+   * Typical milliseconds per transcription, measured as it runs. The pipeline
+   * uses it to decide how often it can afford to transcribe while the user is
+   * still speaking: every ~0.7 s for a 150 ms model, never for a 600 ms one.
+   */
+  readonly typicalMs?: number;
   /**
    * Words the recogniser should expect.
    *
@@ -42,7 +57,7 @@ function binaryPath(): string {
   const candidates = [
     // Bundled with a packaged build.
     path.join(process.resourcesPath ?? "", "whisper", "whisper-server"),
-    // Development: built into vendor/ by scripts/setup-whisper.sh
+    // Development: built into vendor/ by `npm run setup`
     path.join(app.getAppPath(), "vendor", "whisper.cpp", "build", "bin", "whisper-server"),
   ];
   return candidates.find((p) => p && existsSync(p)) ?? candidates[1]!;
@@ -85,6 +100,20 @@ function modelPath(modelId: string): string {
   return path.join(modelsDir(), modelById(modelId).file);
 }
 
+/**
+ * Every server this process has started, so a single exit hook can reap them.
+ *
+ * This used to be done with `process.once("SIGINT" | "SIGTERM")` inside each
+ * start — which had a nasty side effect: installing a signal listener replaces
+ * Node's default action, so the first SIGTERM stopped whisper and left the app
+ * itself running. Signals are now handled once, in index.ts, by quitting the
+ * app, which reaches `stop()` through the normal shutdown path.
+ */
+const live = new Set<ChildProcess>();
+process.once("exit", () => {
+  for (const child of live) child.kill("SIGKILL");
+});
+
 /** Ask the OS for a free port, then hand it to the child. */
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -105,14 +134,21 @@ export class WhisperEngine implements SpeechEngine {
   private starting: Promise<void> | null = null;
   private vocabulary = "";
   private modelId: string;
+  private latency: number;
 
   constructor(modelId: string = DEFAULT_MODEL_ID) {
     this.modelId = modelId;
+    // Seeded from the catalogue's measured figure until real ones arrive.
+    this.latency = modelById(modelId).latencyMs;
   }
 
   /** The model this engine was started with. */
   get model(): string {
     return this.modelId;
+  }
+
+  get typicalMs(): number {
+    return this.latency;
   }
 
   setVocabulary(prompt: string): void {
@@ -135,8 +171,10 @@ export class WhisperEngine implements SpeechEngine {
   private async doStart(): Promise<void> {
     const bin = binaryPath();
     const model = modelPath(this.modelId);
-    if (!existsSync(bin)) throw new Error(`whisper-server not found at ${bin}. Run scripts/setup-whisper.sh`);
-    if (!existsSync(model)) throw new Error(`model not found at ${model}. Run scripts/setup-whisper.sh`);
+    if (!existsSync(bin)) throw new Error(`whisper-server not found at ${bin}. Run \`npm run setup\` first.`);
+    if (!existsSync(model)) {
+      throw new Error(`Speech model not found at ${model}. Run \`npm run setup\`, or download it in Settings → Voice.`);
+    }
 
     reapStale();
     this.port = await freePort();
@@ -161,16 +199,17 @@ export class WhisperEngine implements SpeechEngine {
 
     if (this.child.pid) writeFileSync(pidFile(), String(this.child.pid), "utf8");
 
-    this.child.on("exit", () => {
+    const child = this.child;
+    live.add(child);
+    child.on("exit", () => {
+      live.delete(child);
+      // Only clear state that still belongs to this child: a model switch may
+      // already have started its replacement.
+      if (this.child !== child) return;
       this.ready = false;
       this.child = null;
       rmSync(pidFile(), { force: true });
     });
-
-    // Electron's before-quit runs on a clean exit, but not on a crash or a
-    // signal. These cover the rest.
-    process.once("exit", () => this.stop());
-    for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => this.stop());
 
     await this.waitForListening();
     this.ready = true;
@@ -200,14 +239,18 @@ export class WhisperEngine implements SpeechEngine {
    */
   private async warmup(): Promise<void> {
     const silence = new Float32Array(SAMPLE_RATE); // 1 s
+    const typical = this.latency;
     try {
       await this.transcribe(silence);
     } catch {
       // Warmup is best-effort; a failure here still leaves the server usable.
     }
+    // The shader compile says nothing about steady-state speed; do not let it
+    // talk the pipeline out of streaming.
+    this.latency = typical;
   }
 
-  async transcribe(samples: Float32Array): Promise<string> {
+  async transcribe(samples: Float32Array, opts: TranscribeOptions = {}): Promise<string> {
     if (!this.ready || !this.port) throw new Error("speech engine not started");
 
     const form = new FormData();
@@ -220,19 +263,33 @@ export class WhisperEngine implements SpeechEngine {
     // Bias the decoder toward the words a command is actually made of.
     if (this.vocabulary) form.append("prompt", this.vocabulary);
 
+    const timeout = AbortSignal.timeout(15000);
+    const started = Date.now();
     const res = await fetch(`http://127.0.0.1:${this.port}/inference`, {
       method: "POST",
       body: form,
-      signal: AbortSignal.timeout(15000),
+      signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
     });
     if (!res.ok) throw new Error(`whisper-server returned ${res.status}`);
-    return clean(await res.text());
+    const text = clean(await res.text());
+    // A slow-moving average, so one hiccup does not switch streaming off.
+    this.latency = this.latency * 0.8 + (Date.now() - started) * 0.2;
+    return text;
   }
 
   stop(): void {
     this.ready = false;
-    this.child?.kill("SIGTERM");
+    const child = this.child;
     this.child = null;
+    if (child) {
+      child.kill("SIGTERM");
+      live.delete(child);
+      // SIGTERM is enough when the server is healthy; a wedged Metal context is
+      // not always, and an orphan holds ~500 MB of GPU memory.
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, 2000).unref();
+    }
     rmSync(pidFile(), { force: true });
   }
 }

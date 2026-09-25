@@ -2,9 +2,16 @@
 <meta charset="utf-8" />
 <title>Jev HUD</title>
 <link rel="stylesheet" href="index.css" />
-<div id="pill" class="pill hidden">
-  <span id="dot" class="dot"></span>
-  <span id="text" class="text"></span>
-  <span id="meter" class="meter"><i></i></span>
+<div id="pill" class="pill hidden" data-state="idle" role="status" aria-live="polite">
+  <div class="orb" aria-hidden="true">
+    <span class="orb-ring"></span>
+    <span class="orb-core"></span>
+    <svg class="glyph ok" viewBox="0 0 24 24"><path d="M6.5 12.5l3.6 3.6L17.5 8.6" /></svg>
+    <svg class="glyph fail" viewBox="0 0 24 24"><path d="M8.5 8.5l7 7M15.5 8.5l-7 7" /></svg>
+    <svg class="glyph ask" viewBox="0 0 24 24"><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.5v.5" /><circle cx="12" cy="16.6" r=".9" /></svg>
+  </div>
+  <div class="text" id="text"><span id="words"></span></div>
+  <div class="viz" id="viz" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+  <span class="badge" id="badge"></span>
 </div>
 <script src="index.js"></script>

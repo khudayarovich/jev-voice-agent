@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { AgentState, CommandLogEntry, HudModel } from "../shared/types.ts";
+import type { AgentState, CommandLogEntry, HudModel, HudResult } from "../shared/types.ts";
 
 /**
  * The state machine every other module reports into.
@@ -37,11 +37,16 @@ class Coordinator extends EventEmitter {
     return this.log;
   }
 
-  setState(state: AgentState, detail = ""): void {
-    if (this.state === state && this.hud.detail === detail) return;
+  setState(state: AgentState, detail = "", extra: { meta?: string; result?: HudResult } = {}): void {
+    const meta = extra.meta ?? "";
+    if (
+      this.state === state && this.hud.detail === detail &&
+      (this.hud.meta ?? "") === meta && this.hud.result === extra.result
+    ) return;
+    const changed = this.state !== state;
     this.state = state;
-    this.hud = { ...this.hud, state, detail };
-    this.emit("state", state);
+    this.hud = { ...this.hud, state, detail, meta, ...(extra.result ? { result: extra.result } : { result: undefined }) };
+    if (changed) this.emit("state", state);
     this.emit("hud", this.hud);
   }
 
@@ -52,9 +57,12 @@ class Coordinator extends EventEmitter {
   }
 
   setLevel(level: number): void {
+    // Only the listening overlay shows the level. Anywhere else, sending it
+    // would be ~15 messages a second to a window with nothing to draw.
+    if (this.state !== "listening" && this.state !== "conversing") return;
     // Meter updates are frequent; only emit on a visible change.
     const next = Math.max(0, Math.min(1, level));
-    if (Math.abs(next - this.hud.level) < 0.02) return;
+    if (Math.abs(next - this.hud.level) < 0.01) return;
     this.hud = { ...this.hud, level: next };
     this.emit("hud", this.hud);
   }

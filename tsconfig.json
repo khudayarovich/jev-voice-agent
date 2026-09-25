@@ -35,6 +35,7 @@
     "src/shared/**/*.ts",
     "src/preload/**/*.ts",
     "scripts/**/*.mjs",
+    "scripts/**/*.ts",
     "tests/**/*.ts"
   ]
 }

@@ -39,6 +39,12 @@ export class WindowsPlatform implements PlatformAdapter {
   focus(): Promise<FocusContext> {
     return Promise.resolve({ app: "" });
   }
+  frontApp(): Promise<string> {
+    return Promise.resolve("");
+  }
+  waitForFrontmost(): Promise<boolean> {
+    return Promise.resolve(false);
+  }
   listAutomations(): Promise<string[]> {
     return Promise.resolve([]);
   }

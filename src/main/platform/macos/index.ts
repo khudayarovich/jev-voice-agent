@@ -4,9 +4,16 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { app, clipboard } from "electron";
 import type { AppInfo, FocusContext, KeyCombo, PlatformAdapter } from "../types.ts";
+import { parseDisplayName, parseForegroundApps } from "./lsappinfo.ts";
 import { asStr, osa, runAppleScript } from "./osascript.ts";
 
 const exec = promisify(execFile);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Installed apps change rarely; re-read at most this often, in the background. */
+const APP_CACHE_MS = 60_000;
+/** The user's Shortcuts change even more rarely. */
+const AUTOMATION_CACHE_MS = 5 * 60_000;
 
 /**
  * macOS implementation.
@@ -68,6 +75,9 @@ export class MacPlatform implements PlatformAdapter {
   readonly platform = "darwin" as const;
 
   private appCache: { at: number; apps: AppInfo[] } | null = null;
+  private appRefresh: Promise<AppInfo[]> | null = null;
+  private automationCache: { at: number; list: string[] } | null = null;
+  private automationRefresh: Promise<string[]> | null = null;
 
   // --- discovery ---------------------------------------------------------
 
@@ -76,10 +86,28 @@ export class MacPlatform implements PlatformAdapter {
    *
    * This is the candidate list the router picks from, so it must be the real
    * set: the model can only ever return a name that appeared here.
+   *
+   * Stale-while-revalidate: once there is any list at all, a command never
+   * waits for a fresh one. Re-reading the Applications folders and asking
+   * Spotlight for launch dates costs ~100 ms, and it used to land on the
+   * critical path of whichever command happened to arrive after the cache aged.
    */
   async listApps(): Promise<AppInfo[]> {
-    if (this.appCache && Date.now() - this.appCache.at < 60_000) return this.appCache.apps;
+    if (this.appCache) {
+      if (Date.now() - this.appCache.at > APP_CACHE_MS) void this.refreshApps().catch(() => undefined);
+      return this.appCache.apps;
+    }
+    return this.refreshApps();
+  }
 
+  private refreshApps(): Promise<AppInfo[]> {
+    this.appRefresh ??= this.readApps().finally(() => {
+      this.appRefresh = null;
+    });
+    return this.appRefresh;
+  }
+
+  private async readApps(): Promise<AppInfo[]> {
     const roots = [
       "/Applications",
       "/Applications/Utilities",
@@ -152,7 +180,22 @@ export class MacPlatform implements PlatformAdapter {
     }
   }
 
+  /**
+   * Regular apps that are running, from LaunchServices: ~50 ms and no
+   * permission, against 270-400 ms through System Events, which also needs an
+   * Automation grant. System Events stays as the fallback.
+   */
   async runningApps(): Promise<string[]> {
+    try {
+      const { stdout } = await exec("/usr/bin/lsappinfo", ["list"], {
+        timeout: 2000,
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      const apps = parseForegroundApps(stdout);
+      if (apps.length) return apps;
+    } catch {
+      // Fall through to System Events.
+    }
     const out = await osa(
       `tell application "System Events" to get name of every application process whose background only is false`,
       { timeoutMs: 4000 },
@@ -160,8 +203,35 @@ export class MacPlatform implements PlatformAdapter {
     return out ? out.split(", ").map((s) => s.trim()).filter(Boolean) : [];
   }
 
+  /** The frontmost app's name, from LaunchServices. ~10 ms. */
+  async frontApp(): Promise<string> {
+    const { stdout: asn } = await exec("/usr/bin/lsappinfo", ["front"], { timeout: 1500 });
+    const id = asn.trim();
+    if (!id) return "";
+    const { stdout } = await exec("/usr/bin/lsappinfo", ["info", "-only", "name", id], { timeout: 1500 });
+    return parseDisplayName(stdout);
+  }
+
+  async waitForFrontmost(test: (app: string) => boolean, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (test(await this.frontApp().catch(() => ""))) return true;
+      if (Date.now() >= deadline) return false;
+      await sleep(40);
+    }
+  }
+
   async focus(): Promise<FocusContext> {
-    // One round trip for both values: each osascript spawn costs ~100 ms.
+    // The app name comes from LaunchServices; only the window title needs
+    // Accessibility, so it is fetched alongside and allowed to fail on its own.
+    const title = osa(
+      `tell application "System Events" to tell (first application process whose frontmost is true) to get name of front window`,
+      { timeoutMs: 1500 },
+    ).catch(() => "");
+    const app = await this.frontApp().catch(() => "");
+    if (app) return { app, windowTitle: (await title).trim() };
+
+    // LaunchServices failed: fall back to one System Events round trip.
     const script = `
 tell application "System Events"
   set frontApp to first application process whose frontmost is true
@@ -183,15 +253,32 @@ return appName & "\\n" & winTitle`;
    *
    * These become additional voice commands automatically, which is how the
    * agent stays open-ended without a generative model: write a Shortcut, say
-   * its name.
+   * its name. Cached, and refreshed in the background, like the app list.
    */
   async listAutomations(): Promise<string[]> {
-    try {
-      const { stdout } = await exec("/usr/bin/shortcuts", ["list"], { timeout: 4000 });
-      return stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-    } catch {
-      return [];
+    if (this.automationCache) {
+      if (Date.now() - this.automationCache.at > AUTOMATION_CACHE_MS) {
+        void this.refreshAutomations();
+      }
+      return this.automationCache.list;
     }
+    return this.refreshAutomations();
+  }
+
+  private refreshAutomations(): Promise<string[]> {
+    this.automationRefresh ??= (async () => {
+      try {
+        const { stdout } = await exec("/usr/bin/shortcuts", ["list"], { timeout: 4000 });
+        const list = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+        this.automationCache = { at: Date.now(), list };
+        return list;
+      } catch {
+        return this.automationCache?.list ?? [];
+      } finally {
+        this.automationRefresh = null;
+      }
+    })();
+    return this.automationRefresh;
   }
 
   // --- applications ------------------------------------------------------
@@ -234,9 +321,11 @@ return appName & "\\n" & winTitle`;
    */
   async closeAppWindow(name: string): Promise<void> {
     await this.openApp(name);
-    // Give the window server a moment to actually make it frontmost, or the
-    // keystroke lands on the previous app.
-    await new Promise((r) => setTimeout(r, 250));
+    // Wait until it is actually frontmost, or the keystroke lands on the
+    // previous app. A fixed sleep was both too long when the app was already
+    // running and too short when it was not.
+    const front = await this.waitForFrontmost((a) => a === name, 1500);
+    if (!front) throw new Error(`${name} did not come to the front, so nothing was closed`);
     await this.keystroke({ key: "w", modifiers: ["command"] });
   }
   minimizeWindow = () => this.keystroke({ key: "m", modifiers: ["command"] });
@@ -302,7 +391,7 @@ return appName & "\\n" & winTitle`;
 
   async adjustBrightness(direction: "up" | "down", steps: number): Promise<void> {
     const code = direction === "up" ? KEY_CODES.brightnessUp! : KEY_CODES.brightnessDown!;
-    for (let i = 0; i < Math.max(1, Math.min(16, steps)); i++) await this.keyCode(code);
+    await this.repeatKeyCode(code, Math.max(1, Math.min(16, steps)));
   }
 
   async sleepDisplay(): Promise<void> {
@@ -378,6 +467,22 @@ end tell`;
     await osa(`tell application "System Events" to key code ${code}`, { timeoutMs: 5000 });
   }
 
+  /**
+   * The same key several times, in one osascript run. Each run costs 100-200 ms
+   * to spawn, so "scroll down five times" used to take most of a second.
+   */
+  private async repeatKeyCode(code: number, times: number): Promise<void> {
+    if (times <= 1) return this.keyCode(code);
+    try {
+      await osa(
+        `tell application "System Events"\nrepeat ${times} times\nkey code ${code}\ndelay 0.02\nend repeat\nend tell`,
+        { timeoutMs: 5000 },
+      );
+    } catch (err) {
+      throw translatePermissionError(err, "accessibility");
+    }
+  }
+
   async typeText(text: string): Promise<void> {
     if (!text) return;
     // `keystroke` is layout-dependent and painfully slow for a sentence, so
@@ -407,7 +512,7 @@ end tell`;
 
   async scroll(direction: "up" | "down", amount: number): Promise<void> {
     const code = direction === "up" ? KEY_CODES.pageup! : KEY_CODES.pagedown!;
-    for (let i = 0; i < Math.max(1, Math.min(20, amount)); i++) await this.keyCode(code);
+    await this.repeatKeyCode(code, Math.max(1, Math.min(20, amount)));
   }
 
   // --- web & files -------------------------------------------------------

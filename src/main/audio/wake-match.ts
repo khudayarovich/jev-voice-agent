@@ -97,6 +97,24 @@ function nameIsClose(spoken: string, wanted: string): boolean {
   return editDistance(spoken, wanted) <= allowed;
 }
 
+/**
+ * Is this (possibly partial) transcript addressed to us?
+ *
+ *   yes     — it opens with the wake phrase
+ *   no      — three or more real words in, and no wake phrase: someone else's
+ *             conversation, not worth transcribing any further
+ *   unsure  — too little so far to tell ("Hey", "So, um")
+ *
+ * This is what lets the overlay light up while the user is still mid-sentence,
+ * instead of after they finish, and lets the agent stop transcribing a
+ * conversation that was never meant for it after its first second.
+ */
+export function wakeVerdict(transcript: string, wakeWords: string[]): "yes" | "no" | "unsure" {
+  if (matchWake(transcript, wakeWords).matched) return "yes";
+  const words = normalize(transcript.replace(LEADING_FILLER, "")).split(" ").filter(Boolean);
+  return words.length >= 3 ? "no" : "unsure";
+}
+
 export function matchWake(transcript: string, wakeWords: string[]): WakeMatch {
   const cleaned = transcript.replace(LEADING_FILLER, "").trim();
   // Try the original first: stripping filler also strips a leading "hey".

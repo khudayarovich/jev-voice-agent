@@ -34,6 +34,19 @@ export interface EnumSlot {
   candidates(ctx: ActionContext): Promise<string[]> | string[];
   /** Narrow a long candidate list before asking, to keep `state` small. */
   shortlist?(ctx: ActionContext, all: string[]): string[];
+  /**
+   * Slots that pick from the same kind of thing share one question.
+   *
+   * Every action that names an application — open, quit, hide, close its
+   * window — asks the same question ("which app?"), so the router asks it once,
+   * in the same request as the command itself, and whichever of those actions
+   * Jev picks reads the one answer. Without this, the answer was only ready if
+   * the local ranker had guessed the action correctly, and every miss cost a
+   * second round trip.
+   */
+  group?: "app";
+  /** For app slots: the app must already be running (quit, hide, close). */
+  requiresRunning?: boolean;
 }
 
 /**
@@ -96,8 +109,9 @@ export function enumSlot(
   describe: string,
   candidates: EnumSlot["candidates"],
   shortlist?: EnumSlot["shortlist"],
+  extra: Pick<EnumSlot, "group" | "requiresRunning"> = {},
 ): EnumSlot {
-  return { kind: "enum", describe, candidates, ...(shortlist ? { shortlist } : {}) };
+  return { kind: "enum", describe, candidates, ...(shortlist ? { shortlist } : {}), ...extra };
 }
 
 export function numberSlot(

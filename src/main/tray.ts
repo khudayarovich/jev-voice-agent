@@ -17,6 +17,7 @@ let current: AgentState = "idle";
 interface TrayCallbacks {
   onToggleListening: () => void;
   onOpenSettings: () => void;
+  onAbout: () => void;
   onQuit: () => void;
   isListening: () => boolean;
 }
@@ -34,12 +35,49 @@ const LABEL: Record<AgentState, string> = {
   error: "Error",
 };
 
-function iconFor(state: AgentState) {
-  // Filename must end in `Template` (with a matching @2x) for macOS to tint it
-  // automatically for light/dark menu bars and the clicked state.
-  const img = nativeImage.createFromPath(resource("icons", `${state}Template.png`));
-  img.setTemplateImage(true);
+const images = new Map<string, Electron.NativeImage>();
+
+function image(name: string): Electron.NativeImage {
+  let img = images.get(name);
+  if (!img) {
+    // Filename must end in `Template` (with a matching @2x) for macOS to tint it
+    // automatically for light/dark menu bars and the clicked state.
+    img = nativeImage.createFromPath(resource("icons", `${name}Template.png`));
+    img.setTemplateImage(true);
+    images.set(name, img);
+  }
   return img;
+}
+
+function iconFor(state: AgentState) {
+  return image(state);
+}
+
+/**
+ * The active states move: an equalizer that dances while it hears you, dots
+ * that take turns while it thinks, a wave that breathes while the conversation
+ * is open. Motion answers "is it listening?" faster than any glyph. At rest the
+ * icon is still.
+ */
+const ANIMATIONS: Partial<Record<AgentState, { frames: number[]; ms: number }>> = {
+  listening: { frames: [0, 1, 2, 3, 4, 5], ms: 110 },
+  thinking: { frames: [0, 1, 2], ms: 200 },
+  conversing: { frames: [0, 1, 2, 1], ms: 450 },
+};
+
+let animation: ReturnType<typeof setInterval> | null = null;
+
+function animate(state: AgentState): void {
+  if (animation) clearInterval(animation);
+  animation = null;
+  const spec = ANIMATIONS[state];
+  if (!spec || !tray) return;
+  let i = 0;
+  animation = setInterval(() => {
+    if (!tray || tray.isDestroyed()) return;
+    i = (i + 1) % spec.frames.length;
+    tray.setImage(image(`${state}-${spec.frames[i]}`));
+  }, spec.ms);
 }
 
 function buildMenu(): Menu {
@@ -54,6 +92,7 @@ function buildMenu(): Menu {
     },
     { type: "separator" },
     { label: "Settings…", accelerator: "Command+,", click: () => cbs?.onOpenSettings() },
+    { label: "About JVA", click: () => cbs?.onAbout() },
     { type: "separator" },
     { label: "Quit Jev Voice Agent", accelerator: "Command+Q", click: () => cbs?.onQuit() },
   ]);
@@ -72,6 +111,7 @@ export function setTrayState(state: AgentState): void {
   if (state === current) return;
   current = state;
   tray.setImage(iconFor(state));
+  animate(state);
   tray.setToolTip(`Jev Voice Agent — ${LABEL[state]}`);
   // Rebuild so the pause/resume item and the status line stay accurate.
   tray.setContextMenu(buildMenu());
@@ -82,6 +122,8 @@ export function refreshTrayMenu(): void {
 }
 
 export function destroyTray(): void {
+  if (animation) clearInterval(animation);
+  animation = null;
   tray?.destroy();
   tray = null;
 }

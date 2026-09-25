@@ -14,12 +14,13 @@
         <div class="brand-state" id="brandState">Listening off</div>
       </div>
     </div>
-    <button class="nav" data-tab="connection" aria-current="true">Connection</button>
-    <button class="nav" data-tab="permissions">Permissions</button>
-    <button class="nav" data-tab="voice">Voice</button>
-    <button class="nav" data-tab="commands">Commands</button>
-    <button class="nav" data-tab="activity">Activity</button>
+    <button class="nav" data-tab="connection" aria-current="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.6 9.4l2.8-2.8M5.2 7.6L3.9 8.9a2.2 2.2 0 0 0 3.2 3.2l1.3-1.3M10.8 8.4l1.3-1.3a2.2 2.2 0 0 0-3.2-3.2L7.6 5.2"/></svg>Connection</button>
+    <button class="nav" data-tab="permissions"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.9l5 1.9v3.7c0 3-2.1 5.5-5 6.7-2.9-1.2-5-3.7-5-6.7V3.8z"/><path d="M5.9 8.1l1.5 1.5 2.8-3"/></svg>Permissions</button>
+    <button class="nav" data-tab="voice"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6.8v2.4M5 4.8v6.4M7.5 2.8v10.4M10 4.8v6.4M12.5 6.8v2.4"/></svg>Voice</button>
+    <button class="nav" data-tab="commands"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4.5h7.5M6 8h7.5M6 11.5h7.5"/><circle cx="3.2" cy="4.5" r=".7"/><circle cx="3.2" cy="8" r=".7"/><circle cx="3.2" cy="11.5" r=".7"/></svg>Commands</button>
+    <button class="nav" data-tab="activity"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8.5h2.8l1.6-4.2 2.9 7.6 1.8-4.2h3.9"/></svg>Activity</button>
     <div class="nav-spacer"></div>
+    <button class="nav" data-tab="about"><svg viewBox="0 0 16 16" aria-hidden="true"><circle class="ring" cx="8" cy="8" r="6.2"/><path d="M8 7.3v3.9"/><circle cx="8" cy="5" r=".75"/></svg>About</button>
     <label class="listen-toggle">
       <input type="checkbox" id="listeningToggle" />
       <span>Listening</span>
@@ -92,11 +93,36 @@
       <h1>Voice</h1>
 
       <div class="card">
+        <label class="switch">
+          <input type="checkbox" id="realtime" />
+          <span>
+            <b>Act while I’m still speaking</b>
+            <small>
+              Runs a command at your first pause instead of waiting out a long silence, and runs
+              the finished half of “open Notes and …” before you have said the rest. Live
+              transcription as you speak needs a fast model — Small or Base below.
+            </small>
+          </span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="instantCommands" />
+          <span>
+            <b>Instant commands</b>
+            <small>
+              Exact commands — “open Safari”, “mute”, “next track” — run on this Mac without
+              waiting on the network. Everything else is still routed by Jev.
+            </small>
+          </span>
+        </label>
+      </div>
+
+      <div class="card">
         <span class="label">Speech recognition</span>
         <p class="hint" style="margin:0">
-          Runs entirely on this Mac. Measured here: with a vocabulary hint built from your
-          installed apps, every model below scored the same 2.8% word error rate on clear
-          speech — size earns its keep on accents and background noise, not on clarity.
+          Runs entirely on this Mac. Measured on spoken commands naming installed apps,
+          across four accents: Small was the most accurate <i>and</i> fast enough (~150 ms) to
+          transcribe while you talk. Large v3 Turbo takes ~600 ms a pass, which rules out live
+          transcription — choose it only if Small genuinely struggles with your voice.
         </p>
         <div id="sttModels" class="models"></div>
       </div>
@@ -225,10 +251,49 @@
       <div id="commandList" class="commands"></div>
     </section>
 
+    <!-- ── About ──────────────────────────────────────────────── -->
+    <section class="tab" data-tab="about" hidden>
+      <div class="about">
+        <div class="about-mark" aria-hidden="true"><span></span></div>
+        <h1 class="about-title">JVA</h1>
+        <p class="about-name">Jev Voice Agent</p>
+        <p class="about-version" id="aboutVersion"></p>
+        <p class="lede about-lede">
+          Realtime voice control for macOS. Say “Hey Jeff” and your Mac does it — usually
+          within half a second of you finishing, and for a chained request, before you have.
+        </p>
+      </div>
+
+      <div class="card about-facts">
+        <div class="about-row"><span>Author</span><b>Farrukh Yuldashev</b></div>
+        <div class="about-row"><span>License</span><b>MIT — free and open source</b></div>
+        <div class="about-row">
+          <span>Source</span>
+          <a href="https://github.com/khudayarovich/jev-voice-agent" target="_blank" rel="noopener">github.com/khudayarovich/jev-voice-agent</a>
+        </div>
+      </div>
+
+      <div class="row gap about-actions">
+        <a class="btn primary" href="https://github.com/khudayarovich/jev-voice-agent" target="_blank" rel="noopener">View on GitHub</a>
+        <a class="btn" href="https://github.com/khudayarovich/jev-voice-agent/issues" target="_blank" rel="noopener">Report an issue</a>
+      </div>
+
+      <div class="card note">
+        <p><b>Built with</b></p>
+        <p>
+          <b>Jev</b> by TypeSafe AI decides what each command means. On this Mac,
+          <b>whisper.cpp</b> (MIT) transcribes, <b>Silero VAD</b> (MIT) hears when you speak, and
+          <b>sherpa-onnx</b> (Apache 2.0) listens for the wake word. Your audio never leaves the Mac;
+          only the words of a command are sent to Jev.
+        </p>
+      </div>
+    </section>
+
     <!-- ── Activity ───────────────────────────────────────────── -->
     <section class="tab" data-tab="activity" hidden>
       <h1>Activity</h1>
-      <p class="lede">Recent commands, with per-stage timings. Target is under 600&nbsp;ms end to end.</p>
+      <p class="lede">Recent commands, and how soon after you stopped speaking each one was done.</p>
+      <div id="speed" class="speed" hidden></div>
       <div id="logList" class="log"></div>
       <div class="card note" id="diagNote"></div>
     </section>

@@ -41,7 +41,7 @@ export const STT_MODELS: SttModel[] = [
     size: "141 MB",
     bytes: 147_951_465,
     latencyMs: 55,
-    note: "Fastest, and least accurate on app names. Measured 13.9% word error rate on spoken commands.",
+    note: "Fastest, and the least accurate on app names. Quick enough to transcribe continuously while you talk.",
   },
   {
     id: "small.en",
@@ -50,7 +50,7 @@ export const STT_MODELS: SttModel[] = [
     size: "465 MB",
     bytes: 487_601_967,
     latencyMs: 145,
-    note: "Recommended. Best measured accuracy here — 5.6% word error rate, four times better than Base, and still fast.",
+    note: "Recommended. The most accurate here, and fast enough to transcribe while you talk — commands run as you finish speaking, chains mid-sentence.",
   },
   {
     id: "large-v3-turbo-q5",
@@ -59,7 +59,7 @@ export const STT_MODELS: SttModel[] = [
     size: "547 MB",
     bytes: 574_041_195,
     latencyMs: 605,
-    note: "Multilingual. Measured WORSE than Small on English app names (23.6%), but its multilingual training is what helps with a strong accent — try it only if Small struggles with your voice.",
+    note: "Multilingual, which can help a strong accent. At ~600 ms a pass it cannot transcribe while you talk, so commands wait for your pause: roughly twice as slow to respond as Small.",
   },
 ];
 

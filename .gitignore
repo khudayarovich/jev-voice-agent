@@ -5,3 +5,10 @@ release/
 .DS_Store
 resources/models/
 vendor/
+
+# Local environment and editor state
+.env
+.env.*
+.vscode/
+.idea/
+*.part

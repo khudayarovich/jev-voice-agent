@@ -47,6 +47,15 @@ function installCrashGuard(): void {
   process.on("unhandledRejection", (reason) => {
     log("app", "unhandledRejection", { reason: String(reason) });
   });
+  // A signal quits the app properly, so shutdown() stops the speech server on
+  // the way out. Listening for a signal replaces Node's default of exiting on
+  // the spot, so the handler has to do the quitting itself.
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.on(sig, () => {
+      log("app", "signal", { sig });
+      app.quit();
+    });
+  }
 }
 
 async function main(): Promise<void> {
@@ -62,6 +71,7 @@ async function main(): Promise<void> {
       else void startListening();
     },
     onOpenSettings: () => openSettings(),
+    onAbout: () => openSettings("about"),
     onQuit: () => {
       app.quit();
     },
@@ -125,6 +135,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.setApiKey, (_e, key: string) => {
     setApiKey(String(key ?? ""));
     jev.invalidate();
+    jev.warm();
   });
 
   ipcMain.handle(IPC.probeApiKey, () => jev.probe());
@@ -216,6 +227,7 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.getDiagnostics, () => ({
+    version: app.getVersion(),
     platform: process.platform,
     osRelease: process.getSystemVersion?.() ?? "",
     electron: process.versions.electron,

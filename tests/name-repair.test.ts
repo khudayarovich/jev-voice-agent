@@ -80,3 +80,12 @@ test("reports what it changed, so the log can show it", () => {
   const r = repairAppNames("open cloudy", APPS);
   assert.deepEqual(r.repairs, [{ from: "cloudy", to: "Claude" }]);
 });
+
+test("an ordinary noun is not turned into the app named after its plural", () => {
+  // Observed: "open Notes and create a new note" came out as "... a new Notes",
+  // which routed the second half to opening Notes a second time.
+  const apps = [...APPS, "Notes", "Photos", "Messages", "Reminders"];
+  for (const said of ["create a new note", "send a message", "add a reminder", "take a photo"]) {
+    assert.equal(repairAppNames(said, apps).text, said, said);
+  }
+});

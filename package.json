@@ -1,12 +1,24 @@
 {
   "name": "jev-voice-agent",
   "version": "0.1.0",
-  "description": "Voice control for macOS, routed by the Jev (TypeSafe AI) System One model",
+  "description": "JVA — realtime voice control for macOS, routed by Jev (TypeSafe AI). Commands run as you finish speaking.",
   "private": true,
   "main": "dist/main/index.js",
-  "author": "f.yuldashev",
+  "author": "Farrukh Khudayarovich Yuldashev <fashuzfy98@gmail.com>",
   "license": "MIT",
+  "homepage": "https://github.com/khudayarovich/jev-voice-agent#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khudayarovich/jev-voice-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/khudayarovich/jev-voice-agent/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "setup": "bash scripts/setup.sh",
     "icons": "node scripts/gen-icons.mjs",
     "earcons": "node scripts/gen-earcons.mjs",
     "assets": "npm run icons && npm run earcons",
@@ -17,7 +29,8 @@
     "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
     "dist": "npm run build && electron-builder",
     "tail": "tail -f \"$HOME/Library/Application Support/jev-voice-agent/jev.log\"",
-    "calibrate": "node --experimental-strip-types scripts/calibrate.mjs"
+    "calibrate": "node --experimental-strip-types scripts/calibrate.mjs",
+    "bench": "node scripts/bench.mjs"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "0.6.0",

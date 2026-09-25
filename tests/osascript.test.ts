@@ -9,11 +9,13 @@ test("runs a script and returns stdout", async () => {
   assert.equal(r.timedOut, false);
 });
 
-test("reads system state without triggering an Automation prompt", async () => {
+test("reads system state without triggering an Automation prompt", async (t) => {
   // `get volume settings` is a scripting addition on the current process, not an
   // Apple Event to another app, so it needs no Automation grant.
   const r = await runAppleScript(`return output volume of (get volume settings)`);
   assert.equal(r.ok, true);
+  // A machine with no audio output at all — a CI runner — has no volume to read.
+  if (r.stdout === "missing value") return t.skip("this machine has no audio output device");
   assert.match(r.stdout, /^\d+$/);
 });
 

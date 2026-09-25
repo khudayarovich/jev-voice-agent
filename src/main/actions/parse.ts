@@ -172,6 +172,33 @@ const STOPWORDS = new Set([
 
 const wordsOf = (s: string): string[] => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 
+const DIGIT_WORDS: Record<string, string> = {
+  zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5",
+  six: "6", seven: "7", eight: "8", nine: "9", ten: "10",
+};
+
+/**
+ * Does a run of adjacent spoken words spell the candidate once squashed
+ * together? "vs code" is "VSCode", "php storm" is "PhpStorm", "iterm two" is
+ * "iTerm2".
+ *
+ * Runs must start and end on word boundaries. Squashing the whole transcript
+ * into one string and searching inside it was the earlier approach, and it let
+ * the command verb bleed into the name: "open codex" squashed is "opencodex",
+ * which contains "opencode" — so the agent opened OpenCode.
+ */
+function adjacentWordsSpell(words: string[], flat: string): boolean {
+  const spoken = words.map((w) => DIGIT_WORDS[w] ?? w);
+  for (let i = 0; i < spoken.length; i++) {
+    let joined = "";
+    for (let j = i; j < spoken.length && joined.length < flat.length; j++) {
+      joined += spoken[j];
+      if (j > i && joined === flat) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Score how well a transcript names a candidate.
  *
@@ -187,11 +214,13 @@ export function fuzzyScore(transcript: string, candidate: string): number {
   const c = candidate.toLowerCase().trim();
   if (!c) return 0;
 
-  const transcriptWords = new Set(wordsOf(transcript));
-  const transcriptFlat = wordsOf(transcript).join("");
+  const spoken = wordsOf(transcript);
+  const transcriptWords = new Set(spoken);
 
-  // A verbatim mention is the strongest possible signal.
-  if (wordsOf(c).length > 0 && transcript.toLowerCase().includes(c)) return 1 + c.length / 100;
+  // A verbatim mention is the strongest possible signal — as whole words, so
+  // "Notes" is not found inside "denotes".
+  const cWords = wordsOf(c);
+  if (cWords.length > 0 && containsRun(spoken, cWords)) return 1 + c.length / 100;
 
   const all = wordsOf(c);
   if (all.length === 0) return 0;
@@ -203,9 +232,18 @@ export function fuzzyScore(transcript: string, candidate: string): number {
   const hits = scored.filter((w) => transcriptWords.has(w)).length;
   if (hits === 0) {
     // "iTerm 2" said as "iterm two", "VSCode" said as "vs code".
-    return transcriptFlat.includes(all.join("")) ? 0.9 : 0;
+    return adjacentWordsSpell(spoken, all.join("")) ? 0.9 : 0;
   }
   return hits / scored.length;
+}
+
+/** Does `words` contain `run` as consecutive whole words? */
+function containsRun(words: string[], run: string[]): boolean {
+  outer: for (let i = 0; i + run.length <= words.length; i++) {
+    for (let j = 0; j < run.length; j++) if (words[i + j] !== run[j]) continue outer;
+    return true;
+  }
+  return false;
 }
 
 /** The best-matching candidates, highest first. */

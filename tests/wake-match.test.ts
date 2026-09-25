@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { matchWake } from "../src/main/audio/wake-match.ts";
+import { matchWake, wakeVerdict } from "../src/main/audio/wake-match.ts";
 
 const WAKE = ["hey jeff", "hey jev"];
 const m = (t: string) => matchWake(t, WAKE);
@@ -80,4 +80,24 @@ test("handles a longer wake phrase", () => {
   const r = matchWake("Hey Jeffrey, take a screenshot", ["hey jeffrey"]);
   assert.equal(r.matched, true);
   assert.equal(r.rest, "take a screenshot");
+});
+
+// --- deciding early, from a partial transcript -------------------------------
+
+test("a partial that opens with the wake phrase is for us", () => {
+  assert.equal(wakeVerdict("Hey Jeff, open", WAKE), "yes");
+  assert.equal(wakeVerdict("hey jeff", WAKE), "yes");
+});
+
+test("three real words without it is someone else's conversation", () => {
+  assert.equal(wakeVerdict("so I was telling him", WAKE), "no");
+  assert.equal(wakeVerdict("What time is the meeting", WAKE), "no");
+});
+
+test("too little to tell is not a rejection", () => {
+  // Rejecting here would drop "so yeah, hey Jeff, open Safari" before the wake
+  // phrase had even been said.
+  for (const t of ["Hey", "So, um", "So yeah, hey", "hey jess", ""]) {
+    assert.equal(wakeVerdict(t, WAKE), "unsure", JSON.stringify(t));
+  }
 });

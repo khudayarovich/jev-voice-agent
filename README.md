@@ -1,18 +1,86 @@
-# Jev Voice Agent
+# JVA — Jev Voice Agent
 
-Voice control for macOS, routed by **Jev** — TypeSafe AI's System One model.
+[![CI](https://github.com/khudayarovich/jev-voice-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/khudayarovich/jev-voice-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
 
-Say *"Hey Jeff"*, speak a command, and it runs. Feedback is short indicator
-tones and a menu-bar indicator; there is no talking assistant.
+Realtime voice control for macOS, routed by **Jev** — TypeSafe AI's System One model.
+
+Say *"Hey Jeff"*, speak a command, and it runs — typically **~0.45 s after you
+stop talking**, and for a chained request like *"open Notes and create a new
+note"*, Notes opens **before you have finished the sentence**. Feedback is a
+small overlay under the menu bar and short indicator tones; there is no talking
+assistant.
+
+## Getting started
+
+You need a Mac (Apple Silicon recommended), [Node.js](https://nodejs.org) 22 or
+later, and the Xcode command line tools and CMake to build the speech engine:
+
+```bash
+xcode-select --install     # if you do not have them yet
+brew install cmake
+```
+
+Then:
+
+```bash
+git clone https://github.com/khudayarovich/jev-voice-agent.git
+cd jev-voice-agent
+npm install
+npm run setup    # builds whisper.cpp and downloads the models (~500 MB, once)
+npm start
+```
+
+On first launch Settings opens. Two things to do there:
+
+1. **Connection** — paste a [TypeSafe](https://typesafe.ai) API key for Jev.
+   Without one, a local matcher still handles the common commands, just more
+   bluntly.
+2. **Permissions** — grant Microphone and Accessibility. macOS asks for
+   Automation separately, per app, the first time a command needs it.
+
+Then say *"Hey Jeff, open Safari"*. Or *"Hey Jeff, set the volume to thirty
+percent"*, *"take a screenshot"*, *"open Notes and create a new note"*. Keep
+talking after the first command — no wake word needed until you say "that's it".
+The full list is under Settings → Commands.
 
 ## How it works
 
 ```
-mic → VAD endpoint → local STT → wake phrase in the transcript?
-    → local pre-parser (candidate generation)
-    → ONE Jev systemOne call  → confidence gate → typed executor
+mic → VAD → local STT, while you speak  → wake phrase in the transcript?
+          → at every pause: transcribe it all, route it, act if it is complete
+          → finished clauses of a chain run mid-sentence
+    → ONE Jev systemOne call per clause → confidence gate → typed executor
     → conversation stays open: keep talking, no wake word needed
 ```
+
+### Realtime
+
+The agent does not wait for you to finish, then transcribe, then think. It
+works while you talk:
+
+- **Transcribing as you speak.** With a fast model (Small or Base, ~150 ms a
+  pass) the audio is transcribed every ~0.6 s while you are still talking. That
+  drives the live text in the overlay, lights it up the moment "Hey Jeff" is
+  heard, and routes the command *before* you stop when the words already look
+  complete — so the answer is usually waiting by the time you do.
+- **Acting at the pause, not after the silence.** ~0.2 s after you stop, what you
+  said is transcribed and routed. If it is a complete, confident command it runs
+  right then. A pause that sounds unfinished ("set the volume to…", "open my…")
+  is given longer, so a thinking pause does not cut you off.
+- **Chains, mid-sentence.** A clause followed by "and"/"then" plus more speech is
+  finished, so it runs while you say the rest. Execution always follows the
+  order you spoke in, and waits for an app you just opened to come to the front
+  before the next clause sends it keystrokes.
+- **Instant commands.** Exact commands — "open Safari", "mute", "next track",
+  "take a screenshot" — run on the Mac without a network round trip. Anything
+  looser, anything destructive, and anything that needs choosing from a list
+  still goes to Jev. Switch it off in Settings → Voice.
+- **A warm line to Jev.** Requests go through Chromium's network stack, which
+  keeps an HTTP/2 session open between commands, and the connection is opened
+  the moment anyone starts talking. Measured from here: 781 ms per route with
+  Node's fetch and commands a few seconds apart, 307 ms this way.
 
 The wake phrase is matched **in the transcript**, not by a keyword spotter. A
 spotter was tried first and measured: the same phrase at ordinary speaking
@@ -25,6 +93,9 @@ all.
 Say "Hey Jeff" once and the conversation stays open: keep giving commands until
 you say "that's it", "thanks", or "that's all", or until it goes quiet. The
 menu-bar icon shows sound waves the whole time it is still listening.
+
+The approach was inspired by Andy Gao's voice-controlled Mac built on Jev, where
+"the app opens before I even finish my sentence".
 
 Everything from the microphone to the transcript runs **on this machine**. Only
 the routing decision — a short transcript plus a small structured context
@@ -50,19 +121,36 @@ That is both why it is fast (70–500 ms, ~0.003¢ per command) and why it is sa
 - [x] **Phase 2** — audio capture → transcript (~65 ms on an M4 Pro)
 - [x] **Phase 3** — wake word, VAD endpointing, auto-gain
 - [x] **Phase 4** — Jev routing, typed executor, confirmations
+- [x] **Realtime** — streaming transcription, acting at the pause, chains mid-sentence
 - [ ] **Phase 5** — wider registry, native helper for hold-to-talk
 - [ ] **Phase 6** — Apple SpeechAnalyzer engine, notarization
 
-**To use it:** open Settings → Connection and paste your TypeSafe API key, then
-turn on Listening. Without a key it falls back to the local matcher, which
-handles the common commands but is much blunter.
-
 ## Measured on an M4 Pro
+
+`npm run bench` speaks a set of commands with the system voices and replays them
+through the real pipeline — Silero VAD, whisper-server, Jev over the network — at
+real-time pace, without executing anything. It reports when each action would
+have run, counted from the end of speech:
+
+| model | correct | after end of speech | chains |
+|---|---|---|---|
+| **small.en** (recommended) | 20/20 | **p50 451 ms**, p90 660 ms | first clause runs ~0.6–0.9 s *before* the sentence ends |
+| large-v3-turbo | 20/20 | p50 874 ms, p90 1.3 s | run at the pause (too slow to stream) |
+
+Before the realtime work, the same machine logged 3.5–3.9 s from the end of
+"Hey Jeff, open Claude" to Claude opening. Where that went:
+
+| | before | now |
+|---|---|---|
+| waiting to decide you had stopped | 1.4 s (a 0.7 s VAD hangover *plus* a 0.7 s endpoint) | ~0.2 s, then act at the pause |
+| gathering context (osascript) | ~330 ms, after the transcript | ~30 ms (`lsappinfo`), while you speak |
+| Jev: cold TLS handshake per command | ~460 ms | 0 — HTTP/2 kept warm, preconnected |
+| Jev: second round trip for the app name | ~400 ms | 0 — one request answers everything |
 
 | Stage | Time |
 |---|---|
-| Transcription (3 s command, base.en + Metal) | ~65 ms |
-| Jev routing | p50 410 ms, p95 1.2 s |
+| Transcription, small.en + Metal | ~150 ms |
+| Jev routing, warm (network RTT here ~220 ms) | ~310 ms |
 | Cost | ~$0.08 per 1000 commands |
 
 ### Routing accuracy
@@ -99,6 +187,11 @@ fails, since nearly every recognition error is a proper noun:
 | **small.en** (default) | 22.2% WER | **5.6%** | 145 ms |
 | large-v3-turbo | 22.2% WER | 23.6% | 604 ms |
 
+With realtime, speed counts twice: a model fast enough to transcribe *while you
+talk* (Small or Base) is what lets a command run as you finish and a chain run
+mid-sentence. At ~600 ms a pass large-v3-turbo cannot keep up, so it only
+transcribes at your pause — about twice as slow to respond as Small.
+
 Two results worth keeping in mind. **The vocabulary prompt matters more than the
 model** — it more than halved the error rate for every English model. And
 **bigger is not better**: `large-v3-turbo` is multilingual while the `.en` models
@@ -133,19 +226,42 @@ which matters more than picking the right one.
 
 ## Commands
 
-70 at the moment: 60 built in, plus every Shortcut you have written — those are
+61 built in, plus every Shortcut you have written — those are
 discovered at runtime and become voice-callable with no code change. See
 Settings → Commands.
 
 ## Development
 
 ```bash
-npm install
-npm run assets      # generate tray icons + earcon tones
 npm start           # build and launch
-npm test            # hermetic tests
+npm test            # hermetic tests, no microphone or network needed
+npm run typecheck
+npm run bench       # realtime latency through the real pipeline (needs the API key)
+npm run calibrate   # routing accuracy against the live API (TYPESAFE_API_KEY=...)
+npm run assets      # regenerate the tray icons and indicator tones
+npm run tail        # follow the structured log while you talk to it
 ```
 
 Development runs inside Electron's own bundle (`com.github.Electron`), whose
 signature is stable between rebuilds — so macOS permission grants stick. A
 Developer ID is needed before distributing; see Settings → Permissions.
+
+Issues and pull requests are welcome. The action registry
+(`src/main/actions/registry.ts`) is the place to start: every command is one
+typed entry there, and Jev can only ever choose among them.
+
+## Credits
+
+- [Jev](https://typesafe.ai) by TypeSafe AI routes every command.
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) transcribes on-device.
+- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache 2.0) runs the
+  [Silero VAD](https://github.com/snakers4/silero-vad) (MIT) and the wake-word spotter.
+- [Electron](https://www.electronjs.org) (MIT).
+
+The models are downloaded by `npm run setup` and are not part of this repository.
+
+## License
+
+[MIT](LICENSE) © 2026 Farrukh Khudayarovich Yuldashev.
+
+Made by **Farrukh Yuldashev**.

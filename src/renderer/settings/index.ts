@@ -19,16 +19,19 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 const navs = [...document.querySelectorAll<HTMLButtonElement>(".nav")];
 const tabs = [...document.querySelectorAll<HTMLElement>("section.tab")];
 
-for (const btn of navs) {
-  btn.addEventListener("click", () => {
-    const name = btn.dataset.tab!;
-    for (const n of navs) n.setAttribute("aria-current", String(n === btn));
-    for (const t of tabs) t.hidden = t.dataset.tab !== name;
-    if (name === "permissions") void renderPermissions();
-    if (name === "activity") void renderLog();
-    if (name === "commands") void renderCommands();
-  });
+function showTab(name: string): void {
+  if (!navs.some((n) => n.dataset.tab === name)) return;
+  for (const n of navs) n.setAttribute("aria-current", String(n.dataset.tab === name));
+  for (const t of tabs) t.hidden = t.dataset.tab !== name;
+  if (name === "permissions") void renderPermissions();
+  if (name === "activity") void renderLog();
+  if (name === "commands") void renderCommands();
+  if (name === "about") void renderAbout();
 }
+
+for (const btn of navs) btn.addEventListener("click", () => showTab(btn.dataset.tab!));
+// "About JVA" in the menu bar opens this window on a given tab.
+window.jev.on.showTab(showTab);
 
 // ---------------------------------------------------------------------------
 // Settings binding
@@ -90,6 +93,8 @@ async function hydrate(): Promise<void> {
   $<HTMLInputElement>("followUp").checked = settings.followUp;
   $<HTMLInputElement>("listenOnStart").checked = settings.listenOnStart;
   $<HTMLInputElement>("followUpSeconds").value = String(settings.followUpSeconds);
+  $<HTMLInputElement>("realtime").checked = settings.realtime;
+  $<HTMLInputElement>("instantCommands").checked = settings.instantCommands;
 
   $<HTMLOutputElement>("wakeThresholdOut").textContent = pct(settings.wakeThreshold);
   $<HTMLOutputElement>("earconVolumeOut").textContent = pct(settings.earconVolume);
@@ -99,7 +104,7 @@ async function hydrate(): Promise<void> {
   hydrating = false;
 }
 
-for (const id of ["offlineFallback", "wakeWordEnabled", "earcons", "confirmDestructive", "launchAtLogin", "followUp", "listenOnStart"] as const) {
+for (const id of ["offlineFallback", "wakeWordEnabled", "earcons", "confirmDestructive", "launchAtLogin", "followUp", "listenOnStart", "realtime", "instantCommands"] as const) {
   bindCheckbox(id);
 }
 for (const id of ["model", "baseUrl", "hotkey"] as const) bindText(id);
@@ -373,18 +378,77 @@ function entryRow(e: CommandLogEntry): HTMLElement {
   said.textContent = `“${e.transcript}”`;
   const meta = document.createElement("span");
   meta.className = "meta";
-  meta.textContent = e.timings.total ? `${Math.round(e.timings.total)} ms` : "";
+  // The number that decides whether it feels instant: how long after the user
+  // stopped talking the action was done. Negative means before they finished.
+  const after = e.timings.afterSpeech;
+  meta.textContent =
+    after === undefined
+      ? e.timings.total ? `${Math.round(e.timings.total)} ms` : ""
+      : after < 0
+        ? "before you finished"
+        : `${Math.round(after)} ms after you stopped`;
   const did = document.createElement("span");
   did.className = "did";
-  const conf = e.confidence !== null ? ` · ${Math.round(e.confidence * 100)}% confident` : "";
-  const off = e.offline ? " · offline" : "";
-  did.textContent = `${e.action ?? "no match"}${conf}${off}${e.detail ? ` — ${e.detail}` : ""}`;
+  const conf = !e.instant && e.confidence !== null ? ` · ${Math.round(e.confidence * 100)}% confident` : "";
+  did.textContent = `${e.action ?? "no match"}${conf}${e.detail ? ` — ${e.detail}` : ""}`;
   el.append(said, meta, did);
+
+  const tags: [string, string][] = [];
+  if (e.timings.afterSpeech !== undefined && e.timings.afterSpeech < 0) tags.push(["realtime", "before you finished"]);
+  else if (e.early) tags.push(["realtime", "at the first pause"]);
+  if (e.instant) tags.push(["instant", "instant — no network"]);
+  if (e.offline) tags.push(["offline", "offline matcher"]);
+  if (tags.length) {
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    for (const [cls, label] of tags) {
+      chips.append(Object.assign(document.createElement("span"), { className: `chip ${cls}`, textContent: label }));
+    }
+    el.append(chips);
+  }
   return el;
+}
+
+/**
+ * The headline number: typically how long after the user stops talking the
+ * command is done. Only successful commands count — a refusal being fast is
+ * not the point.
+ */
+function renderSpeed(log: CommandLogEntry[]): void {
+  const host = $("speed");
+  const done = log.filter((e) => e.outcome === "ok" && e.timings.afterSpeech !== undefined);
+  if (done.length === 0) {
+    host.hidden = true;
+    return;
+  }
+  const times = done.map((e) => Math.max(0, e.timings.afterSpeech!)).sort((a, b) => a - b);
+  const median = times[Math.floor(times.length / 2)]!;
+  const before = done.filter((e) => e.timings.afterSpeech! < 0).length;
+  const early = done.filter((e) => e.early).length;
+  const instant = done.filter((e) => e.instant).length;
+
+  const num = Object.assign(document.createElement("div"), {
+    className: "speed-num",
+    textContent: median < 1000 ? `${Math.round(median)} ms` : `${(median / 1000).toFixed(1)} s`,
+  });
+  const label = Object.assign(document.createElement("div"), {
+    className: "speed-label",
+    textContent: `typical time from the end of your sentence to done, over the last ${done.length} command${done.length === 1 ? "" : "s"}`,
+  });
+  const chips = document.createElement("div");
+  chips.className = "chips";
+  const add = (cls: string, text: string) =>
+    chips.append(Object.assign(document.createElement("span"), { className: `chip ${cls}`, textContent: text }));
+  if (before) add("realtime", `${before} before you finished`);
+  if (early) add("realtime", `${early} acted on at the pause`);
+  if (instant) add("instant", `${instant} instant`);
+  host.replaceChildren(num, label, chips);
+  host.hidden = false;
 }
 
 async function renderLog(): Promise<void> {
   const log = await window.jev.agent.log();
+  renderSpeed(log);
   const host = $("logList");
   if (log.length === 0) {
     const empty = document.createElement("div");
@@ -508,7 +572,20 @@ window.jev.on.state(paintState);
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// About
+// ---------------------------------------------------------------------------
+
+async function renderAbout(): Promise<void> {
+  const d = await window.jev.agent.diagnostics();
+  $("aboutVersion").textContent = `Version ${String(d.version ?? "")} · Electron ${String(d.electron ?? "")}`;
+}
+
+// ---------------------------------------------------------------------------
+
 async function boot(): Promise<void> {
+  const requested = location.hash.slice(1);
+  if (requested) showTab(requested);
   await hydrate();
   await refreshKeyHint();
   const { state } = await window.jev.agent.state();

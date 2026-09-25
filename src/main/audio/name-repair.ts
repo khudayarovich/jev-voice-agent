@@ -68,6 +68,12 @@ const PROTECTED = new Set([
   "hey", "jeff", "jev", "yes", "no", "okay", "ok",
 ]);
 
+/** "note" and "notes", "match" and "matches": one word, two numbers. */
+function sameWordPlural(a: string, b: string): boolean {
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return long === `${short}s` || long === `${short}es`;
+}
+
 export interface RepairResult {
   text: string;
   /** What was changed, for the log. */
@@ -113,6 +119,13 @@ export function repairAppNames(transcript: string, appNames: string[]): RepairRe
       // word endings but almost never change the sound a word starts with, and
       // without this rule "cats" was being rewritten to "Notes".
       if (shape[0] !== key[0]) continue;
+
+      // "create a new note" is not about the Notes app. The singular of an app
+      // named with a plain noun is that noun — note, photo, message, reminder —
+      // and rewriting it broke the command it was in. A name said in the
+      // singular still reaches the right app through the router, which is
+      // allowed to read "note" as Notes when that is what was meant.
+      if (sameWordPlural(bare.toLowerCase(), app.toLowerCase())) continue;
 
       const shapeDistance = distance(shape, key);
       if (shapeDistance > 1) continue;

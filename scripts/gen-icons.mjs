@@ -208,14 +208,54 @@ const GLYPHS = {
   },
 };
 
+// --- animation frames ------------------------------------------------------
+//
+// The active states move, so "is it hearing me?" is answered by motion rather
+// than by squinting at a 16-pixel glyph. tray.ts cycles these; everything at
+// rest stays still, because a menu bar full of fidgeting icons is a menu bar
+// nobody wants.
+
+const EQUALIZER = [
+  [0.30, 0.52, 0.72, 0.46, 0.24],
+  [0.44, 0.70, 0.50, 0.62, 0.32],
+  [0.56, 0.40, 0.66, 0.76, 0.42],
+  [0.36, 0.62, 0.80, 0.44, 0.56],
+  [0.26, 0.74, 0.54, 0.64, 0.36],
+  [0.40, 0.48, 0.70, 0.52, 0.28],
+];
+
+const FRAMES = {
+  listening: EQUALIZER.map((bars) => (m) => {
+    bars.forEach((h, i) => {
+      const x = 0.115 + i * 0.1725;
+      m.roundRect(x - 0.043, 0.5 - h / 2, 0.086, h, 0.043);
+    });
+  }),
+  // A typing indicator: one dot rises at a time.
+  thinking: [0, 1, 2].map((up) => (m) => {
+    for (let i = 0; i < 3; i++) {
+      const raised = i === up;
+      m.circle(0.22 + i * 0.28, raised ? 0.42 : 0.52, raised ? 0.1 : 0.08, raised ? 1 : 0.55);
+    }
+  }),
+  // The open channel breathes: the outer wave fades and returns.
+  conversing: [1, 0.55, 0.2].map((outer) => (m) => {
+    mic(m, { solid: false });
+    m.ring(0.58, 0.45, 0.30, 0.055, 1, -Math.PI * 0.26, Math.PI * 0.26);
+    m.ring(0.58, 0.45, 0.44, 0.055, outer, -Math.PI * 0.2, Math.PI * 0.2);
+  }),
+};
+
 mkdirSync(OUT, { recursive: true });
 let count = 0;
-for (const [name, draw] of Object.entries(GLYPHS)) {
+const write = (name, draw) => {
   for (const [size, suffix] of [[16, ""], [32, "@2x"]]) {
     const m = new Mask(size);
     draw(m);
     writeFileSync(path.join(OUT, `${name}Template${suffix}.png`), png(m.toRGBA(size), size));
     count++;
   }
-}
+};
+for (const [name, draw] of Object.entries(GLYPHS)) write(name, draw);
+for (const [name, frames] of Object.entries(FRAMES)) frames.forEach((draw, i) => write(`${name}-${i}`, draw));
 console.log(`[icons] wrote ${count} files to resources/icons`);

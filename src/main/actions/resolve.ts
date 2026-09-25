@@ -22,6 +22,8 @@ export interface RouteDecision {
   addressed: number;
   risk: number;
   offline: boolean;
+  /** Decided on this Mac by an exact match, without asking Jev. */
+  instant?: boolean;
   ms: number;
   inputTokens: number;
   reason?: string;

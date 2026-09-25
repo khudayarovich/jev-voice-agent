@@ -27,7 +27,13 @@ export interface HudModel {
   detail: string;
   /** Mic level 0..1, for the meter. */
   level: number;
+  /** A small badge beside a result, e.g. "0.4 s" — how quickly it happened. */
+  meta?: string;
+  /** Set once a command has been dealt with, so the overlay can show how it went. */
+  result?: HudResult;
 }
+
+export type HudResult = "ok" | "failed" | "rejected" | "cancelled";
 
 // ---------------------------------------------------------------------------
 // Permissions
@@ -107,6 +113,17 @@ export interface AppSettings {
   inputDeviceId: string;
   /** Which local speech-to-text model to run. See STT_MODELS. */
   sttModel: string;
+  /**
+   * Act while the user is still speaking: transcribe as they talk, run a
+   * finished command at the first pause, and run the finished half of "open
+   * Notes and …" before the second half is said.
+   */
+  realtime: boolean;
+  /**
+   * Run exact, unambiguous commands ("open Safari", "mute", "next track")
+   * without asking Jev. Saves the network round trip on the commonest commands.
+   */
+  instantCommands: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -128,6 +145,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   inputDeviceId: "",
   sttModel: "small.en",
+  realtime: true,
+  instantCommands: true,
 };
 
 /** Result of probing the configured Jev credentials. */
@@ -150,6 +169,12 @@ export interface StageTimings {
   route?: number;
   execute?: number;
   total?: number;
+  /**
+   * From the moment the user stopped speaking to the action being done — the
+   * number that decides whether it feels instant. Negative when the action ran
+   * before they finished the sentence.
+   */
+  afterSpeech?: number;
 }
 
 export interface CommandLogEntry {
@@ -160,6 +185,10 @@ export interface CommandLogEntry {
   confidence: number | null;
   /** True when the local matcher answered because Jev was unavailable. */
   offline: boolean;
+  /** Answered on this Mac by an exact match, without asking Jev. */
+  instant?: boolean;
+  /** Acted on at a pause, or mid-sentence, rather than after the silence. */
+  early?: boolean;
   outcome: "ok" | "rejected" | "failed" | "cancelled";
   detail: string;
   timings: StageTimings;

@@ -83,6 +83,21 @@ test("fuzzy scoring ranks a direct mention highest", () => {
   assert.equal(fuzzyScore("open safari", "Mail"), 0);
 });
 
+test("the command verb never bleeds into an app name", () => {
+  // Observed in real use: "open codex" squashed to "opencodex", which contains
+  // "opencode", so the agent opened OpenCode.
+  assert.equal(fuzzyScore("open codex", "OpenCode"), 0);
+  assert.equal(fuzzyScore("open safaris", "Safari"), 0, "whole words only");
+  assert.equal(fuzzyScore("the notes app denotes nothing", "Notes"), 1 + 5 / 100);
+});
+
+test("names split by the recogniser still match", () => {
+  assert.equal(fuzzyScore("open php storm", "PhpStorm"), 0.9);
+  assert.equal(fuzzyScore("open chat gpt", "ChatGPT"), 0.9);
+  assert.equal(fuzzyScore("open vs code", "VSCode"), 0.9);
+  assert.equal(fuzzyScore("open iterm two", "iTerm2"), 0.9);
+});
+
 test("fuzzy scoring copes with multi-word and squashed app names", () => {
   assert.ok(fuzzyScore("open visual studio code", "Visual Studio Code") > 0.9);
   assert.ok(fuzzyScore("open iterm", "iTerm") > 0.9);

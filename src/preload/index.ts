@@ -90,6 +90,11 @@ const api = {
     },
   },
   on: {
+    showTab: (fn: (tab: string) => void) => {
+      const h = (_e: unknown, tab: string) => fn(tab);
+      ipcRenderer.on(IPC.showTab, h);
+      return () => ipcRenderer.removeListener(IPC.showTab, h);
+    },
     state: (fn: (s: AgentState) => void) => {
       const h = (_e: unknown, s: AgentState) => fn(s);
       ipcRenderer.on(IPC.agentStateChanged, h);

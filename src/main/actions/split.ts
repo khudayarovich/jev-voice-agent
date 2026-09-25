@@ -21,18 +21,42 @@ import { ACTIONS } from "./registry.ts";
  * spaces around it, so "open Firefox and open YouTube" is genuinely two
  * commands. Including it blocked exactly that split.
  */
-const TEXT_PAYLOAD = new Set<string>(["type_text", "web_search"]);
+export const TEXT_PAYLOAD = new Set<string>(["type_text", "web_search"]);
 
-const SEPARATOR = /\s+(?:and\s+then|and\s+also|,\s*then|,\s*and|\bthen\b|\band\b)\s+/i;
+const SEPARATOR = /\s*(?:,\s*and\s+then|\s+and\s+then|\s+and\s+also|,\s*then|,\s*and|\s+then\b|\s+and\b)\s+/i;
+
+/**
+ * What is left after the first `k` clauses: "open Notes and type hello and
+ * goodbye" after one clause is "type hello and goodbye". Used once the first
+ * clause has already run mid-sentence, so the rest is judged as a whole again
+ * and the "and" inside dictation stays where it belongs.
+ */
+export function clauseTail(transcript: string, k: number): string {
+  if (k <= 0) return transcript.trim();
+  const re = new RegExp(SEPARATOR.source, "gi");
+  let m: RegExpExecArray | null;
+  let seen = 0;
+  while ((m = re.exec(transcript)) !== null) {
+    if (++seen === k) return transcript.slice(m.index + m[0].length).trim();
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  return "";
+}
+
+/** Cut at the conjunctions, without judging whether the pieces are commands. */
+export function clausesOf(transcript: string): string[] {
+  return transcript
+    .trim()
+    .split(SEPARATOR)
+    .map((p) => p.replace(/^[\s,.;]+|[\s,.;!?]+$/g, ""))
+    .filter((p) => p.length > 1);
+}
 
 export function splitCommands(transcript: string): string[] {
   const whole = transcript.trim();
   if (!whole) return [];
 
-  const parts = whole
-    .split(SEPARATOR)
-    .map((p) => p.replace(/^[\s,.;]+|[\s,.;]+$/g, ""))
-    .filter((p) => p.length > 1);
+  const parts = clausesOf(whole);
 
   if (parts.length < 2) return [whole];
 

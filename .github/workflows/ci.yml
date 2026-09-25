@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # The app is macOS-only, and some tests drive osascript for real.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+        env:
+          # Nothing here launches Electron itself, so skip its 100 MB download.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+      - name: Wake-word model, for the tokenizer tests
+        run: npm run setup -- --only kws
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

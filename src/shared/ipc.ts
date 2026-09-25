@@ -33,6 +33,8 @@ export const IPC = {
   hudUpdate: "hud:update",
   logAppended: "log:appended",
   playEarcon: "earcon:play",
+  /** Bring a Settings tab to the front, e.g. "about" from the menu bar. */
+  showTab: "settings:showTab",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

@@ -7,12 +7,17 @@ import type { AgentState, HudModel } from "../../shared/types.ts";
  * `backgroundThrottling: false`, so a single AudioContext stays warm for the
  * life of the app. Creating a context per cue would cost 50-150 ms of device
  * setup; decoding per cue would cost more.
+ *
+ * Rendering is incremental: the model arrives ~15 times a second while the mic
+ * is live (the level meter), so only what actually changed is touched, and the
+ * visualizer runs on its own animation frame, smoothing toward the latest level.
  */
 
 const pill = document.getElementById("pill") as HTMLDivElement;
-const dot = document.getElementById("dot") as HTMLSpanElement;
-const text = document.getElementById("text") as HTMLSpanElement;
-const meterFill = document.querySelector("#meter > i") as HTMLElement;
+const text = document.getElementById("text") as HTMLDivElement;
+const words = document.getElementById("words") as HTMLSpanElement;
+const badge = document.getElementById("badge") as HTMLSpanElement;
+const bars = [...document.querySelectorAll<HTMLElement>("#viz > i")];
 
 /** States that warrant showing the overlay at all. */
 const VISIBLE: ReadonlySet<AgentState> = new Set<AgentState>([
@@ -24,28 +29,150 @@ const VISIBLE: ReadonlySet<AgentState> = new Set<AgentState>([
   "error",
 ]);
 
+/** Where the pill's width may go: never a sliver, never wider than the window. */
+const MIN_WIDTH = 190;
+const MAX_WIDTH = 540;
+
+let shownText = "";
+let lastResult: string | undefined;
 let hideTimer: number | undefined;
+let visible = false;
 
 function render(m: HudModel): void {
-  dot.className = `dot ${m.state}`;
-  const body = m.transcript || m.detail;
-  text.className = `text${m.transcript && m.partial ? " partial" : ""}${!m.transcript ? " detail" : ""}`;
-  // Wrapped in a span so the RTL trick that keeps the tail visible doesn't
-  // reorder the text itself.
-  text.replaceChildren(Object.assign(document.createElement("span"), { textContent: body }));
-  meterFill.style.width = `${Math.round(m.level * 100)}%`;
+  const stateChanged = pill.dataset.state !== m.state;
+  pill.dataset.state = m.state;
 
-  const show =
-    VISIBLE.has(m.state) && Boolean(body || m.state === "listening" || m.state === "conversing");
+  const result = m.result;
+  if (result) pill.dataset.result = result;
+  else delete pill.dataset.result;
+  if (result && result !== lastResult) celebrate(result);
+  lastResult = result;
+
+  const body = m.transcript || m.detail;
+  text.classList.toggle("partial", Boolean(m.transcript) && m.partial);
+  text.classList.toggle("detail", !m.transcript);
+  const textChanged = setText(body);
+
+  const meta = result === "ok" ? (m.meta ?? "") : "";
+  if (badge.textContent !== meta) badge.textContent = meta;
+
+  target = m.level;
+
+  const show = VISIBLE.has(m.state) && Boolean(body || m.state === "listening" || m.state === "conversing");
   window.clearTimeout(hideTimer);
   if (show) {
-    pill.classList.remove("hidden");
-  } else if (m.state === "error") {
-    // Let an error linger long enough to read.
-    hideTimer = window.setTimeout(() => pill.classList.add("hidden"), 2600);
+    setVisible(true);
+  } else if (m.state === "error" || result === "failed" || result === "rejected") {
+    // Let a problem linger long enough to read.
+    hideTimer = window.setTimeout(() => setVisible(false), 2600);
   } else {
-    pill.classList.add("hidden");
+    setVisible(false);
   }
+
+  if (textChanged || stateChanged) fit();
+  driveVisualizer();
+}
+
+function setVisible(on: boolean): void {
+  if (on === visible) return;
+  visible = on;
+  pill.classList.toggle("hidden", !on);
+}
+
+/**
+ * Update the words, animating only what is new.
+ *
+ * A growing transcript ("open" → "open Saf" → "open Safari") appends its new
+ * tail, which fades in; anything else replaces the line with a quick swap. The
+ * text is always set through textContent — it is speech, never markup.
+ */
+function setText(next: string): boolean {
+  if (next === shownText) return false;
+  if (shownText && next.startsWith(shownText)) {
+    const tail = document.createElement("span");
+    tail.className = "w-new";
+    tail.textContent = next.slice(shownText.length);
+    words.append(tail);
+    // Fold finished animations back into plain text so the DOM stays small.
+    if (words.childNodes.length > 12) words.textContent = next;
+  } else {
+    words.textContent = next;
+    words.classList.remove("swap");
+    void words.offsetWidth; // restart the animation
+    words.classList.add("swap");
+  }
+  shownText = next;
+  return true;
+}
+
+/**
+ * Glide the pill to fit its text. The window cannot resize smoothly, so the
+ * pill does it inside the window; CSS animates the change.
+ */
+function fit(): void {
+  const natural = words.scrollWidth;
+  // padding-left, orb, gap, gap before the visualizer, padding-right — the
+  // visualizer is always a flex item, so its gap counts even when it is empty.
+  const chrome = 8 + 28 + 10 + 10 + 16;
+  const state = pill.dataset.state;
+  const viz = state === "listening" || state === "conversing" || state === "thinking" ? 25 : 0;
+  const tag = badge.textContent ? badge.offsetWidth + 10 : 0;
+  const wanted = chrome + viz + tag + natural + 2;
+  const width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, wanted));
+  pill.style.setProperty("--w", `${Math.round(width)}px`);
+  // Decided from the target width, not measured: mid-animation the pill is
+  // still narrow, and measuring then faded out text that was about to fit.
+  text.classList.toggle("clip", wanted > MAX_WIDTH);
+}
+
+/** The pop of success, the shake of failure. */
+function celebrate(result: string): void {
+  const cls = result === "ok" ? "pop" : result === "failed" || result === "rejected" ? "shake" : "";
+  if (!cls) return;
+  pill.classList.remove("pop", "shake");
+  void pill.offsetWidth;
+  pill.classList.add(cls);
+}
+pill.addEventListener("animationend", (e) => {
+  if (e.target === pill) pill.classList.remove("pop", "shake");
+});
+
+// ---------------------------------------------------------------------------
+// Voice visualizer
+// ---------------------------------------------------------------------------
+
+let target = 0;
+let smooth = 0;
+let raf = 0;
+
+/**
+ * Bars and orb follow the microphone while it is live, smoothed so they move
+ * like a voice rather than like a meter. Stops when nothing is listening.
+ */
+function driveVisualizer(): void {
+  const live = visible && (pill.dataset.state === "listening" || pill.dataset.state === "conversing");
+  if (live && !raf) raf = requestAnimationFrame(frame);
+  if (!live && raf) {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    pill.style.setProperty("--lvl", "0");
+    for (const b of bars) b.style.transform = "";
+  }
+}
+
+function frame(t: number): void {
+  // Rise quickly, fall slowly: speech is spiky, and a meter that drops the
+  // instant a syllable ends looks broken.
+  smooth += (target - smooth) * (target > smooth ? 0.45 : 0.12);
+  // RMS of ordinary speech is ~0.02-0.1; a square-root curve spreads that
+  // across the whole range.
+  const v = Math.min(1, Math.sqrt(smooth) * 2.4);
+  pill.style.setProperty("--lvl", v.toFixed(3));
+  bars.forEach((b, i) => {
+    const sway = 0.55 + 0.45 * Math.sin(t / 150 + i * 1.7);
+    b.style.transform = `scaleY(${(0.18 + v * sway * 0.82).toFixed(3)})`;
+  });
+  raf = requestAnimationFrame(frame);
 }
 
 window.jev.on.hud(render);

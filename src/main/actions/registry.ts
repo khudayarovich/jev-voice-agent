@@ -30,6 +30,7 @@ const appSlot = (describe: string) =>
     // Narrow before asking: a padded state measurably degrades the model, and
     // there is no reason to make it read 200 app names to pick one.
     (ctx, all) => shortlistBy(ctx.transcript, all, 6),
+    { group: "app" },
   );
 
 const runningAppSlot = (describe: string) =>
@@ -37,6 +38,7 @@ const runningAppSlot = (describe: string) =>
     describe,
     (ctx) => (ctx.runningApps.length ? ctx.runningApps : ctx.installedApps),
     (ctx, all) => shortlistBy(ctx.transcript, all, 6),
+    { group: "app", requiresRunning: true },
   );
 
 export const ACTIONS = {
@@ -616,8 +618,9 @@ export const ACTIONS = {
   }),
 
   new_window: action({
-    describe: "Open a new window in the current application.",
-    examples: ["new window", "open a new window"],
+    describe:
+      "Create a new window, document or item in the application in front — its Command-N: a new note in Notes, a new message in Mail, a new document in an editor.",
+    examples: ["new window", "open a new window", "create a new note", "new document"],
     slots: {},
     async run(_a, os) {
       await os.keystroke({ key: "n", modifiers: ["command"] });

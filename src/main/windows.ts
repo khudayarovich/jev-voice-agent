@@ -1,4 +1,5 @@
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow, nativeTheme, screen, shell } from "electron";
+import { IPC } from "../shared/ipc.ts";
 import { preloadFile, rendererFile } from "./paths.ts";
 
 /**
@@ -13,10 +14,11 @@ let settingsWin: BrowserWindow | null = null;
 let hudWin: BrowserWindow | null = null;
 let captureWin: BrowserWindow | null = null;
 
-export function openSettings(): BrowserWindow {
+export function openSettings(tab?: string): BrowserWindow {
   if (settingsWin && !settingsWin.isDestroyed()) {
     settingsWin.show();
     settingsWin.focus();
+    if (tab) settingsWin.webContents.send(IPC.showTab, tab);
     return settingsWin;
   }
   settingsWin = new BrowserWindow({
@@ -26,7 +28,8 @@ export function openSettings(): BrowserWindow {
     minHeight: 520,
     title: "Jev Voice Agent",
     titleBarStyle: "hiddenInset",
-    backgroundColor: "#1b1b1f",
+    // Match the page, or a light-mode user sees a dark flash while it loads.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1b1b1f" : "#f5f5f7",
     show: false,
     webPreferences: {
       preload: preloadFile(),
@@ -39,7 +42,15 @@ export function openSettings(): BrowserWindow {
   settingsWin.on("closed", () => {
     settingsWin = null;
   });
-  void settingsWin.loadFile(rendererFile("settings"));
+  // Links (the About page's GitHub link, say) open in the user's browser. The
+  // settings window itself never navigates anywhere or opens another window:
+  // it is a privileged page with a bridge to the main process.
+  settingsWin.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  settingsWin.webContents.on("will-navigate", (e) => e.preventDefault());
+  void settingsWin.loadFile(rendererFile("settings"), tab ? { hash: tab } : {});
   return settingsWin;
 }
 
@@ -64,14 +75,17 @@ export function getSettingsWindow(): BrowserWindow | null {
 export function createHud(): BrowserWindow {
   if (hudWin && !hudWin.isDestroyed()) return hudWin;
 
-  const width = 560;
-  const height = 96;
+  // Room around the 540-px pill for its shadow and its spring, which would
+  // otherwise be clipped by the window edge. The window is click-through, so
+  // the margin blocks nothing.
+  const width = 620;
+  const height = 112;
   const { workArea } = screen.getPrimaryDisplay();
   hudWin = new BrowserWindow({
     width,
     height,
     x: Math.round(workArea.x + (workArea.width - width) / 2),
-    y: Math.round(workArea.y + 12),
+    y: Math.round(workArea.y + 2),
     frame: false,
     transparent: true,
     hasShadow: false,
@@ -114,15 +128,28 @@ export function getHud(): BrowserWindow | null {
   return hudWin && !hudWin.isDestroyed() ? hudWin : null;
 }
 
+let hudHideTimer: ReturnType<typeof setTimeout> | null = null;
+
 export function showHud(): void {
+  if (hudHideTimer) clearTimeout(hudHideTimer);
+  hudHideTimer = null;
   const w = getHud();
   if (!w) return;
   // showInactive, never show(): show() would focus the panel and break dictation.
   if (!w.isVisible()) w.showInactive();
 }
 
+/**
+ * Hide the overlay — after its exit animation. Hiding the window at once cut
+ * the pill off mid-frame, so it never got to animate out at all.
+ */
 export function hideHud(): void {
-  getHud()?.hide();
+  const w = getHud();
+  if (!w?.isVisible() || hudHideTimer) return;
+  hudHideTimer = setTimeout(() => {
+    hudHideTimer = null;
+    getHud()?.hide();
+  }, 320);
 }
 
 /**

@@ -1,58 +1,296 @@
-/* The window itself is transparent; only the pill paints. */
+/*
+ * The overlay: one dark pill under the menu bar, in the spirit of the Dynamic
+ * Island. Always dark, whatever the wallpaper, so it reads everywhere.
+ *
+ * The window itself is transparent and FIXED in size — resizing a transparent
+ * window on macOS flickers — so everything that moves, moves inside it: the
+ * pill springs in, glides to the width of its text, and settles.
+ */
 :root { color-scheme: dark; }
+
+@property --spin {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
 html, body {
   margin: 0; height: 100%;
   background: transparent;
   overflow: hidden;
-  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font: 13.5px/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
   /* The panel is click-through at the OS level; make sure nothing here fights it. */
   user-select: none; -webkit-user-select: none;
   cursor: default;
 }
-body { display: flex; align-items: flex-start; justify-content: center; padding-top: 8px; }
+body { display: flex; align-items: flex-start; justify-content: center; padding-top: 10px; }
+
+/* --- the pill ------------------------------------------------------------ */
 
 .pill {
+  /* Per-state accent pair, set below. */
+  --a: #34d399;
+  --b: #22d3ee;
+  --lvl: 0;
+
+  position: relative;
   display: flex; align-items: center; gap: 10px;
-  max-width: 520px; min-width: 220px;
-  padding: 10px 16px;
-  border-radius: 999px;
-  background: rgba(28, 28, 32, 0.82);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  border: 0.5px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
-  color: #f2f2f5;
-  /* Size is fixed by design: resizing a transparent window on macOS flickers. */
-  transition: opacity 140ms ease, transform 140ms ease;
-}
-.pill.hidden { opacity: 0; transform: translateY(-8px); pointer-events: none; }
+  box-sizing: border-box;
+  height: 44px;
+  width: var(--w, 220px);
+  max-width: 540px;
+  padding: 0 16px 0 8px;
+  border-radius: 22px;
+  color: #f5f5f7;
+  background: rgba(16, 16, 20, 0.8);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.38),
+    0 2px 6px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.13);
 
-.dot {
-  flex: none; width: 9px; height: 9px; border-radius: 50%;
-  background: #8e8e93;
-  box-shadow: 0 0 0 0 rgba(255,255,255,0);
+  /* In: a spring, with a touch of overshoot, dropping from the menu bar. */
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+  transition:
+    width 460ms cubic-bezier(0.2, 0.9, 0.2, 1.04),
+    opacity 240ms ease-out,
+    transform 520ms cubic-bezier(0.18, 1.35, 0.4, 1),
+    filter 260ms ease-out;
 }
-.dot.listening  { background: #30d158; animation: pulse 1.25s ease-in-out infinite; }
-.dot.conversing { background: #30d158; opacity: 0.7; }
-.dot.thinking   { background: #0a84ff; animation: pulse 0.9s ease-in-out infinite; }
-.dot.executing  { background: #5e5ce6; }
-.dot.confirming { background: #ff9f0a; animation: pulse 0.7s ease-in-out infinite; }
-.dot.error      { background: #ff453a; }
 
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
-  50%      { box-shadow: 0 0 0 5px rgba(255,255,255,0); opacity: 0.55; }
+/* Out: quicker, and back up where it came from. */
+.pill.hidden {
+  opacity: 0;
+  transform: translateY(-18px) scale(0.88);
+  filter: blur(8px);
+  transition:
+    width 460ms cubic-bezier(0.2, 0.9, 0.2, 1.04),
+    opacity 180ms ease-in,
+    transform 220ms ease-in,
+    filter 180ms ease-in;
 }
+
+/* A thin glowing edge that flows while the agent is actively working. */
+.pill::before {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(100deg, transparent 10%, var(--a) 35%, var(--b) 55%, transparent 80%);
+  background-size: 250% 100%;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 400ms ease;
+  pointer-events: none;
+}
+.pill[data-state="listening"]::before,
+.pill[data-state="thinking"]::before,
+.pill[data-state="confirming"]::before {
+  opacity: 0.85;
+  animation: flow 2.2s linear infinite;
+}
+.pill[data-state="thinking"]::before { animation-duration: 1.1s; }
+
+/* --- per-state colour ---------------------------------------------------- */
+
+.pill[data-state="listening"]  { --a: #34d399; --b: #22d3ee; }
+.pill[data-state="conversing"] { --a: #34d399; --b: #86efac; }
+.pill[data-state="thinking"]   { --a: #60a5fa; --b: #c084fc; }
+.pill[data-state="executing"]  { --a: #818cf8; --b: #60a5fa; }
+.pill[data-state="confirming"] { --a: #fbbf24; --b: #fb923c; }
+.pill[data-state="error"]      { --a: #f87171; --b: #fb7185; }
+.pill[data-result="ok"]        { --a: #34d399; --b: #10b981; }
+.pill[data-result="failed"],
+.pill[data-result="rejected"]  { --a: #f87171; --b: #fb923c; }
+.pill[data-result="cancelled"] { --a: #a1a1aa; --b: #71717a; }
+
+/* --- the orb ------------------------------------------------------------- */
+
+.orb {
+  position: relative;
+  flex: none;
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+}
+.orb > * { grid-area: 1 / 1; }
+
+.orb-core {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.55), transparent 42%),
+    conic-gradient(from var(--spin), var(--a), var(--b), var(--a));
+  box-shadow: 0 0 16px -3px var(--a);
+  /* The voice itself swells it, a little. */
+  transform: scale(calc(0.86 + var(--lvl) * 0.34));
+  transition: transform 90ms linear, box-shadow 300ms ease;
+}
+
+.orb-ring {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--a);
+  opacity: 0;
+}
+.pill[data-state="listening"] .orb-ring { animation: ripple 1.5s cubic-bezier(0.2, 0.6, 0.3, 1) infinite; }
+.pill[data-state="conversing"] .orb-core { animation: breathe 2.8s ease-in-out infinite; }
+.pill[data-state="thinking"] .orb-core,
+.pill[data-state="executing"]:not([data-result]) .orb-core { animation: spin 0.9s linear infinite; }
+.pill[data-state="confirming"] .orb-core { animation: breathe 1.1s ease-in-out infinite; }
+
+/* Glyphs drawn over the orb once there is an outcome. */
+.glyph {
+  width: 16px; height: 16px;
+  fill: none;
+  stroke: #0b0b0e;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 160ms ease, transform 300ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+.glyph path { stroke-dasharray: 24; stroke-dashoffset: 24; }
+.glyph.ask circle { fill: #0b0b0e; stroke: none; }
+
+.pill[data-result="ok"] .glyph.ok,
+.pill[data-result="failed"] .glyph.fail,
+.pill[data-result="rejected"] .glyph.fail,
+.pill[data-state="confirming"] .glyph.ask {
+  opacity: 1;
+  transform: scale(1);
+}
+.pill[data-result="ok"] .glyph.ok path,
+.pill[data-result="failed"] .glyph.fail path,
+.pill[data-result="rejected"] .glyph.fail path,
+.pill[data-state="confirming"] .glyph.ask path {
+  animation: draw 420ms 80ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.pill[data-result] .orb-core { transform: scale(1.02); }
+
+/* --- the words ----------------------------------------------------------- */
 
 .text {
   flex: 1 1 auto;
-  /* Long transcripts clip and scroll inside a constant box rather than growing it. */
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  direction: rtl; text-align: left;   /* keeps the newest words visible */
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  white-space: nowrap;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  transition: color 200ms ease;
 }
-.text > span { direction: ltr; unicode-bidi: embed; }
-.text.partial { opacity: 0.62; }
-.text.detail  { opacity: 0.78; font-style: normal; }
+/* Too long for the pill: keep the newest words in view, fade the oldest out. */
+.text.clip {
+  justify-content: flex-end;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 28px);
+  mask-image: linear-gradient(90deg, transparent 0, #000 28px);
+}
+.text.partial { color: rgba(245, 245, 247, 0.72); }
+.text.detail  { color: rgba(245, 245, 247, 0.8); font-weight: 450; }
+#words { flex: none; }
 
-.meter { flex: none; width: 34px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.16); overflow: hidden; }
-.meter > i { display: block; height: 100%; width: 0%; background: #30d158; transition: width 90ms linear; }
+/* Each newly recognised stretch of words arrives softly rather than popping. */
+.w-new { display: inline-block; white-space: pre; animation: word-in 280ms ease-out both; }
+.swap  { animation: swap-in 240ms ease-out both; }
+
+/* --- the voice ------------------------------------------------------------ */
+
+.viz {
+  flex: none;
+  display: flex; align-items: center; gap: 2.5px;
+  height: 18px;
+  opacity: 0;
+  width: 0;
+  transition: opacity 200ms ease, width 300ms ease;
+}
+.viz i {
+  display: block;
+  width: 3px; height: 18px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--b), var(--a));
+  transform: scaleY(0.18);
+  transform-origin: center;
+}
+.pill[data-state="listening"] .viz,
+.pill[data-state="conversing"] .viz,
+.pill[data-state="thinking"] .viz { opacity: 1; width: 25px; }
+/* Thinking: the bars roll in a wave, independent of the mic. */
+.pill[data-state="thinking"] .viz i { animation: wave 900ms ease-in-out infinite; }
+.pill[data-state="thinking"] .viz i:nth-child(2) { animation-delay: 90ms; }
+.pill[data-state="thinking"] .viz i:nth-child(3) { animation-delay: 180ms; }
+.pill[data-state="thinking"] .viz i:nth-child(4) { animation-delay: 270ms; }
+.pill[data-state="thinking"] .viz i:nth-child(5) { animation-delay: 360ms; }
+
+/* --- how fast it was ------------------------------------------------------ */
+
+.badge {
+  flex: none;
+  font: 600 11px/1 ui-rounded, -apple-system, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--a);
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--a) 16%, transparent);
+  opacity: 0;
+  transform: translateX(6px) scale(0.9);
+  transition: opacity 220ms ease, transform 360ms cubic-bezier(0.2, 1.3, 0.4, 1);
+}
+.badge:empty { display: none; }
+.pill[data-result="ok"] .badge { opacity: 1; transform: none; }
+
+/* --- outcome moments ------------------------------------------------------ */
+
+.pill.pop { animation: pop 460ms cubic-bezier(0.2, 1.3, 0.4, 1); }
+.pill.shake { animation: shake 420ms cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+
+/* --- keyframes ------------------------------------------------------------ */
+
+@keyframes flow { from { background-position: 150% 0; } to { background-position: -100% 0; } }
+@keyframes spin { to { --spin: 360deg; } }
+@keyframes ripple {
+  0%   { opacity: 0.7; transform: scale(0.9); }
+  100% { opacity: 0; transform: scale(1.75); }
+}
+@keyframes breathe {
+  0%, 100% { transform: scale(0.86); box-shadow: 0 0 10px -4px var(--a); }
+  50%      { transform: scale(1);    box-shadow: 0 0 18px -2px var(--a); }
+}
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes word-in {
+  from { opacity: 0; filter: blur(4px); transform: translateY(3px); }
+  to   { opacity: 1; filter: blur(0);   transform: none; }
+}
+@keyframes swap-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.2); }
+  50%      { transform: scaleY(0.85); }
+}
+@keyframes pop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.045); }
+  100% { transform: scale(1); }
+}
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(3px); }
+  30%, 50%, 70% { transform: translateX(-5px); }
+  40%, 60% { transform: translateX(5px); }
+}
+
+/* Motion is for meaning, never a requirement. */
+@media (prefers-reduced-motion: reduce) {
+  .pill, .pill.hidden { transform: none !important; filter: none !important; transition: opacity 120ms linear, width 0s; }
+  *, *::before, *::after { animation: none !important; }
+  .glyph path { stroke-dashoffset: 0; }
+}
