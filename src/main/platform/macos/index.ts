@@ -95,7 +95,8 @@ const MODIFIER_NAMES: Record<string, string> = {
   control: "control down",
   option: "option down",
   shift: "shift down",
-  fn: "function down",
+  // No "fn": System Events has no such modifier ("function down" is a syntax
+  // error), and a key code such as F11's already names the key on that layer.
 };
 
 /** What a player is doing, in one round trip: "playing|Blue in Green". */
@@ -400,7 +401,7 @@ return appName & "\\n" & winTitle`;
   }
 
   async showDesktop(): Promise<void> {
-    await this.keystroke({ key: "f11", modifiers: ["fn"] });
+    await this.keystroke({ key: "f11" });
   }
 
   async switchSpace(direction: "left" | "right"): Promise<void> {
