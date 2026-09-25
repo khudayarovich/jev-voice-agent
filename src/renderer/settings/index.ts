@@ -33,6 +33,16 @@ for (const btn of navs) btn.addEventListener("click", () => showTab(btn.dataset.
 // "About JVA" in the menu bar opens this window on a given tab.
 window.jev.on.showTab(showTab);
 
+// A grant given in System Settings shows here the moment the user comes back,
+// or the moment the app notices it — not on the next visit to this pane.
+const permissionsShowing = () => !tabs.find((t) => t.dataset.tab === "permissions")?.hidden;
+window.jev.on.permissionsChanged(() => {
+  if (permissionsShowing()) void renderPermissions();
+});
+window.addEventListener("focus", () => {
+  if (permissionsShowing()) void renderPermissions();
+});
+
 // ---------------------------------------------------------------------------
 // Settings binding
 // ---------------------------------------------------------------------------

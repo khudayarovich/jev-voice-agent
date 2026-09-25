@@ -128,6 +128,7 @@ async function main(): Promise<void> {
   const configured = apiKeySummary().present && permissions.requiredSatisfied();
   if (!configured) {
     openSettings();
+    watchForSetup();
     return;
   }
 
@@ -138,6 +139,31 @@ async function main(): Promise<void> {
     log("app", "auto-start", {});
     void startListening();
   }
+}
+
+/**
+ * Not set up yet: watch for the grants to arrive and start then. Observed in
+ * real use: the user ticked Accessibility in System Settings and the app,
+ * having checked once at launch, sat at "Listening off" with its pane still
+ * saying "Not set".
+ */
+function watchForSetup(): void {
+  const started = Date.now();
+  let was = permissions.list().map((p) => p.state).join();
+  const timer = setInterval(() => {
+    const now = permissions.list().map((p) => p.state).join();
+    if (now !== was) {
+      was = now;
+      broadcast(IPC.permissionsChanged, {});
+    }
+    if (apiKeySummary().present && permissions.requiredSatisfied()) {
+      clearInterval(timer);
+      log("app", "set-up", { afterMs: Date.now() - started });
+      if (getSettings().listenOnStart && !coordinator.isListening()) void startListening();
+    } else if (Date.now() - started > 30 * 60_000) {
+      clearInterval(timer);
+    }
+  }, 1500);
 }
 
 function registerIpc(): void {

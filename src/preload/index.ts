@@ -98,6 +98,11 @@ const api = {
     },
   },
   on: {
+    permissionsChanged: (fn: () => void) => {
+      const h = () => fn();
+      ipcRenderer.on(IPC.permissionsChanged, h);
+      return () => ipcRenderer.removeListener(IPC.permissionsChanged, h);
+    },
     showTab: (fn: (tab: string) => void) => {
       const h = (_e: unknown, tab: string) => fn(tab);
       ipcRenderer.on(IPC.showTab, h);

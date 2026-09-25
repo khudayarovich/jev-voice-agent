@@ -39,6 +39,8 @@ export const IPC = {
   playEarcon: "earcon:play",
   /** Bring a Settings tab to the front, e.g. "about" from the menu bar. */
   showTab: "settings:showTab",
+  /** The grants changed underneath the app: the Permissions pane re-reads them. */
+  permissionsChanged: "perm:changed",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];
