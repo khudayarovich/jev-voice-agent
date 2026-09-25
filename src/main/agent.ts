@@ -19,7 +19,7 @@ import {
 import { ACTIONS, type ActionKey } from "./actions/registry.ts";
 import { appUniverse } from "./actions/slots.ts";
 import { clauseTail, splitCommands } from "./actions/split.ts";
-import type { ActionContext, ActionResult } from "./actions/types.ts";
+import type { ActionContext, ActionResult, Exchange } from "./actions/types.ts";
 import { downloadModel, isInstalled } from "./audio/download.ts";
 import { modelById } from "./audio/models.ts";
 import { AudioPipeline, type TriggerKind, type Utterance, VAD_HANGOVER_MS } from "./audio/pipeline.ts";
@@ -39,7 +39,7 @@ import { type RouteDecision, route } from "./jev/router.ts";
 import { log as fileLog } from "./log.ts";
 import { platform } from "./platform/index.ts";
 import { getOpenRouterKey, getSettings } from "./settings-store.ts";
-import { broadcast, createCapture, getCapture, hideHud, showHud } from "./windows.ts";
+import { broadcast, createCapture, getCapture, hideHud, showHud, openSettings } from "./windows.ts";
 
 /**
  * Owns the listening lifecycle — the speech engine, the pipeline, the hotkey —
@@ -280,6 +280,23 @@ function currentEnv(): Promise<Env> {
  * done, in the context each one is decided and run with.
  */
 const recent: { at: number; detail: string }[] = [];
+
+/**
+ * The talk so far: what was said and what came of it, failures included, and
+ * kept past the end of a conversation. Observed in real use: a command failed
+ * for want of a permission, "which permission do you need?" followed, and the
+ * agent, with no memory of the failure, said nothing at all.
+ */
+const history: Exchange[] = [];
+const HISTORY_MS = 10 * 60_000;
+const HISTORY_MAX = 8;
+
+function recordExchange(said: string, outcome: Exchange["outcome"], detail: string): void {
+  // Speech not meant for the agent, and "okay, that's it", are not exchanges.
+  if (outcome === "cancelled" && (detail === "not addressed to the agent" || detail === "Okay")) return;
+  history.push({ said, outcome, detail, at: Date.now() });
+  if (history.length > HISTORY_MAX) history.splice(0, history.length - HISTORY_MAX);
+}
 let lastBrowser: { name: string; at: number } | null = null;
 let lastPage: { url: string; at: number } | null = null;
 
@@ -309,9 +326,11 @@ function withMemory(e: Env): Env {
       : undefined;
   const page = lastPage && now - lastPage.at < RECENT_MS ? lastPage.url : undefined;
   const learned = learnedCommands();
+  const talk = history.filter((h) => now - h.at < HISTORY_MS);
   return {
     ...e,
     ...(done.length ? { recent: done } : {}),
+    ...(talk.length ? { history: talk } : {}),
     ...(browser ? { lastBrowser: browser } : {}),
     ...(page ? { lastPage: page } : {}),
     ...(learned.length ? { learned } : {}),
@@ -916,6 +935,8 @@ async function run(
     worldVersion++;
     remember(action, args, result, ctx);
     if (action === "run_learned" && learnedCommands().some((c) => c.id === args.command)) countUse(String(args.command));
+    // Asked which permission it needs: the answer is a pane, as much as words.
+    if (action === "explain_last" && /permission/i.test(result.detail ?? "")) openSettings("permissions");
     // A couple of actions steer the agent itself rather than the OS.
     if (action === "stop_listening") stopListening();
     // Another command follows: let the app just opened actually come to the
@@ -1069,6 +1090,15 @@ async function answerClarification(u: Utterance, s: Session): Promise<boolean> {
 /** A new command has more to take in than "Quit Safari?": longer to answer. */
 const LESSON_WINDOW_MS = 25_000;
 
+/**
+ * Lessons designed but not yet kept, by request: a trial that failed for a
+ * reason outside the lesson — a permission not yet granted — should not cost
+ * a second round trip to the teacher once the reason is gone.
+ */
+const proposals = new Map<string, { lesson: LearnedCommand; at: number }>();
+const PROPOSAL_MS = 15 * 60_000;
+const requestKey = (clause: string) => clause.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+
 function canLearn(): boolean {
   return getSettings().learning && getOpenRouterKey() !== "";
 }
@@ -1088,24 +1118,32 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
   const started = Date.now();
 
   let checked: Checked;
-  try {
-    const [catalog, checks] = await Promise.all([
-      commandCatalog(ctx),
-      lessonChecks(ctx, learnedCommands().map((c) => c.id)),
-    ]);
-    const messages = lessonMessages({
-      request: clause,
-      catalog,
-      apps: checks.apps,
-      shortcuts: ctx.automations,
-      focusedApp: ctx.focusedApp,
-    });
-    const answer = await askTeacher(messages, { apiKey: getOpenRouterKey(), model: settings.learnModel });
-    checked = checkLesson(answer, checks, { request: clause, model: settings.learnModel });
-  } catch (err) {
-    fileLog("learn", "failed", { request: clause, message: describe(err), ms: Date.now() - started });
-    finish(u, s, { outcome: "failed", action: null, detail: `Couldn't learn that: ${describe(err)}`, decision: null });
-    return;
+  const kept = proposals.get(requestKey(clause));
+  if (kept && Date.now() - kept.at < PROPOSAL_MS) {
+    // Designed and checked minutes ago, tried, and not kept: offer it again
+    // rather than have it designed again.
+    checked = { ok: true, command: kept.lesson };
+    fileLog("learn", "reproposed", { request: clause, id: kept.lesson.id });
+  } else {
+    try {
+      const [catalog, checks] = await Promise.all([
+        commandCatalog(ctx),
+        lessonChecks(ctx, learnedCommands().map((c) => c.id)),
+      ]);
+      const messages = lessonMessages({
+        request: clause,
+        catalog,
+        apps: checks.apps,
+        shortcuts: ctx.automations,
+        focusedApp: ctx.focusedApp,
+      });
+      const answer = await askTeacher(messages, { apiKey: getOpenRouterKey(), model: settings.learnModel });
+      checked = checkLesson(answer, checks, { request: clause, model: settings.learnModel });
+    } catch (err) {
+      fileLog("learn", "failed", { request: clause, message: describe(err), ms: Date.now() - started });
+      finish(u, s, { outcome: "failed", action: null, detail: `Couldn't learn that: ${describe(err)}`, decision: null });
+      return;
+    }
   }
 
   if (!checked.ok) {
@@ -1115,6 +1153,7 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
   }
 
   const lesson = checked.command;
+  proposals.set(requestKey(clause), { lesson, at: Date.now() });
   fileLog("learn", "proposed", {
     request: clause, id: lesson.id, title: lesson.title, steps: lesson.steps,
     confirm: lesson.confirm, ms: Date.now() - started,
@@ -1146,6 +1185,7 @@ function keepLesson(u: Utterance, s: Session, lesson: LearnedCommand, r: Outcome
     return;
   }
   const kept = { ...lesson, uses: 1 };
+  proposals.delete(requestKey(u.transcript));
   rememberLesson(kept);
   worldVersion++;
   fileLog("learn", "learned", { id: kept.id, title: kept.title, examples: kept.examples });
@@ -1241,6 +1281,7 @@ function finish(
     result: outcome,
   });
   fileLog("agent", "finish", { outcome, action, detail, afterSpeechMs: afterSpeech, early: Boolean(opts.early) });
+  recordExchange(u.transcript, outcome, detail);
 
   log({
     transcript: u.transcript,

@@ -361,3 +361,16 @@ test("the questions about the screen need no model", () => {
     assert.ok(d.confidence >= 0.55, `${said} at ${d.confidence}`);
   }
 });
+
+test("asked which permission it needs, the agent names it", async () => {
+  const { calls, os } = recorder();
+  const failed = ctx("which permission do you need", {
+    history: [{ said: "close notepad", outcome: "failed", detail: "Accessibility permission is needed to press keys and buttons. Grant it in Settings → Permissions.", at: Date.now() }],
+  });
+  const r = await execute("explain_last", {}, os, failed);
+  assert.match(r.detail ?? "", /^Accessibility — I need it/);
+  assert.deepEqual(calls, []);
+  const done = ctx("what did you just do", { history: [{ said: "open safari", outcome: "ok", detail: "Opened Safari", at: Date.now() }] });
+  assert.equal((await execute("explain_last", {}, os, done)).detail, "I just did: Opened Safari");
+  assert.equal((await execute("explain_last", {}, os, ctx("what happened"))).detail, "Nothing has happened yet");
+});

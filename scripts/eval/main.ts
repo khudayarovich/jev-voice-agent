@@ -134,6 +134,10 @@ const CASES: Case[] = [
   { say: "Play a radio.", expect: ["click_on", "unknown_task"], env: { focusedApp: "Music", windowTitle: "Music" } },
   { say: "Can you up the sound?", expect: ["volume_up"] },
   { say: "Click on the next song.", expect: ["media_next", "click_on"] },
+  // --- the talk so far -----------------------------------------------------
+  { say: "which permission do you need?", expect: ["explain_last"], env: { history: [{ said: "close notepad", outcome: "failed", detail: "Accessibility permission is needed to press keys and buttons. Grant it in Settings → Permissions.", at: Date.now() }] } },
+  { say: "why did that not work", expect: ["explain_last"], env: { history: [{ said: "click hello", outcome: "failed", detail: "Couldn't find “Hello” in Safari.", at: Date.now() }] } },
+  { say: "what did you just do", expect: ["explain_last"], env: { history: [{ said: "open safari", outcome: "ok", detail: "Opened Safari", at: Date.now() }] } },
   // --- what is on the screen ----------------------------------------------
   { say: "what apps are open", expect: ["list_open_apps"] },
   { say: "which apps are running right now", expect: ["list_open_apps"] },

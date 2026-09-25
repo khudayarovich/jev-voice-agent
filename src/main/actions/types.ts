@@ -42,6 +42,20 @@ export interface ActionContext {
   lastPage?: string;
   /** Commands the agent has learned, offered to Jev beside the built-in ones. */
   learned?: LearnedCommand[];
+  /**
+   * What was said and what came of it, lately, oldest first — so "which
+   * permission do you need?" after a failure can be answered, and Jev can read
+   * "grant it" as the follow-up it is.
+   */
+  history?: Exchange[];
+}
+
+/** One thing the user said, and how it went. */
+export interface Exchange {
+  said: string;
+  outcome: "ok" | "failed" | "rejected" | "cancelled";
+  detail: string;
+  at: number;
 }
 
 /**

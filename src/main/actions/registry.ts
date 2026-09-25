@@ -89,6 +89,22 @@ async function mediaOutcome(os: PlatformAdapter, before: NowPlaying | null, key:
   return `${now.state === "paused" ? "Paused" : "Stopped"} ${now.app}`;
 }
 
+/**
+ * What just happened, as an answer. A failure for want of a permission names
+ * the permission first, since that is what was asked; any other failure is
+ * repeated as it was reported; a success is recalled as one.
+ */
+export function explainLast(ctx: ActionContext): string {
+  const last = ctx.history?.at(-1);
+  if (!last) return "Nothing has happened yet";
+  const permission = last.detail.match(/\b([A-Z][\w ]*?) permission\b/)?.[1];
+  if (last.outcome !== "ok" && permission) {
+    return `${permission} — I need it to do that. Opening Settings → Permissions so you can grant it.`;
+  }
+  if (last.outcome === "ok") return `I just did: ${last.detail}`;
+  return `That didn't work: ${last.detail}`;
+}
+
 /** The apps the user can see, the one in front first — and never this one. */
 function appsOnScreen(ctx: ActionContext): string[] {
   const shown = ctx.windowedApps?.length ? ctx.windowedApps : ctx.runningApps;
@@ -551,6 +567,24 @@ export const ACTIONS = {
       if (!now) return { detail: "Nothing is playing in Music or Spotify" };
       if (now.state === "playing") return { detail: `Playing${now.track ? ` “${now.track}”` : ""} in ${now.app}` };
       return { detail: `${now.app} is ${now.state}${now.track ? ` on “${now.track}”` : ""}` };
+    },
+  }),
+
+  explain_last: action({
+    describe:
+      "Answer a question about what just happened between the user and the agent: why the last command failed, which permission or setting it needs, or what it just did. A question to the agent about itself, not a task for the computer.",
+    examples: [
+      "which permission do you need",
+      "what permission do you need",
+      "why didn't that work",
+      "what went wrong",
+      "what happened",
+      "what did you just do",
+      "what do you need",
+    ],
+    slots: {},
+    async run(_a, _os, ctx) {
+      return { detail: explainLast(ctx) };
     },
   }),
 

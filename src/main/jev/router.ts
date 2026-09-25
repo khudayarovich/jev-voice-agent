@@ -81,7 +81,15 @@ function stateFor(ctx: ActionContext) {
     ...(ctx.windowedApps?.length ? { open_apps: ctx.windowedApps.slice(0, 12) } : {}),
     ...(onScreen(ctx).length ? { on_screen: onScreen(ctx) } : {}),
     ...(ctx.recent?.length ? { recent_actions: ctx.recent } : {}),
+    // The talk so far, so "which permission?" and "grant it" read as the
+    // follow-ups they are.
+    ...(ctx.history?.length ? { conversation: ctx.history.slice(-4).map(exchange) } : {}),
   };
+}
+
+/** '"close notepad" → failed: Accessibility permission is needed…'. */
+function exchange(h: { said: string; outcome: string; detail: string }): string {
+  return `"${h.said}" → ${h.outcome === "ok" ? "" : `${h.outcome}: `}${h.detail.slice(0, 120)}`;
 }
 
 /** "Safari: YouTube", one per titled window, at most eight. */

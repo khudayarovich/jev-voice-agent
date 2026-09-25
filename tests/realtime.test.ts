@@ -165,6 +165,15 @@ test("a settings page named by itself opens at once, said to Settings or said as
   assert.equal(instantRoute("show desktop", inSettings)?.action, "show_desktop");
 });
 
+test("a question about what just went wrong is answered from memory, with no model", () => {
+  const failed = ctx({ history: [{ said: "close notepad", outcome: "failed", detail: "Accessibility permission is needed to press keys and buttons.", at: Date.now() }] });
+  for (const said of ["Which permission do you need?", "what permission you need", "why didn't that work", "What happened?"]) {
+    assert.equal(instantRoute(said, failed)?.action, "explain_last", said);
+  }
+  // With nothing gone wrong there is nothing to explain: the model reads it.
+  assert.equal(instantRoute("what permission you need", ctx()), null);
+});
+
 test("anything inexact, unknown or destructive still goes to Jev", () => {
   for (const said of [
     "open the browser", // a description, not a name
