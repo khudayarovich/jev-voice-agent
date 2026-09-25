@@ -179,6 +179,10 @@ func score(label: String, link: String?, wanted: String) -> Int {
   let w = normalized(wanted)
   guard !w.isEmpty else { return 0 }
   if l == w { return 100 }
+  // "wifi" is "Wi‑Fi", "sign in" is "Sign-in": the same words, spaced differently.
+  let squashedLabel = l.replacingOccurrences(of: " ", with: "")
+  let squashedWanted = w.replacingOccurrences(of: " ", with: "")
+  if squashedLabel == squashedWanted { return 95 }
   let words = Set(l.split(separator: " ").map(String.init))
   let asked = w.split(separator: " ").map(String.init)
   if l.hasPrefix(w + " ") { return 85 }
@@ -272,7 +276,21 @@ func press(_ element: AXUIElement, dryRun: Bool, label: String) -> Never {
   if let u = url(element) { fields["url"] = u }
   if dryRun { emit(fields) }
   if AXUIElementPerformAction(element, kAXPressAction as CFString) == .success { emit(fields) }
-  // Some web elements take no AXPress: bring into view and click the middle.
+  // A row in a list or a sidebar — System Settings' "Wi‑Fi" — is chosen by
+  // selecting it, not pressing it.
+  if r == "AXRow" || r == "AXCell" || r == "AXOutlineRow" {
+    let target = r == "AXCell" ? (parent(element) ?? element) : element
+    if AXUIElementSetAttributeValue(target, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success {
+      emit(fields)
+    }
+  }
+  // Last resort, a click in the middle of it — but only into the app in front:
+  // a click at a screen position lands on whatever is on top there.
+  var owner: pid_t = 0
+  AXUIElementGetPid(element, &owner)
+  guard owner == NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+    fail("not-pressable", "Found \"\(label)\", but it cannot be pressed while its app is behind another.")
+  }
   _ = AXUIElementPerformAction(element, "AXScrollToVisible" as CFString)
   usleep(150_000)
   var origin = CGPoint.zero

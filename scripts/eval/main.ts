@@ -43,6 +43,14 @@ interface Case {
 }
 
 const BROWSERS_OPEN = { runningApps: ["Finder", "Safari", "Google Chrome"] };
+const ON_YOUTUBE = {
+  focusedApp: "Google Chrome",
+  windowTitle: "YouTube",
+  runningApps: ["Finder", "Google Chrome"],
+  lastBrowser: "Google Chrome",
+  lastPage: "youtube.com",
+  recent: ["Opened Google Chrome", "Opened youtube.com"],
+};
 const ON_RESULTS = {
   focusedApp: "Google Chrome",
   windowTitle: "youtube - Google Search",
@@ -60,7 +68,7 @@ const CASES: Case[] = [
   { say: "open camera to take a selfie.", expect: ["open_app", "take_photo"], target: /Photo Booth|^$/ },
   { say: "open the camera app", expect: ["open_app"], target: "Photo Booth" },
   { say: "open my browser.", expect: ["open_app"], target: /Safari|Google Chrome/ },
-  { say: "open the browser", expect: ["open_app"], target: "Google Chrome", env: { runningApps: ["Finder", "Google Chrome"] } },
+  { say: "open the browser", expect: ["open_app"], target: "Google Chrome", env: { runningApps: ["Finder", "Google Chrome"], windowedApps: ["Finder", "Google Chrome"] } },
   { say: "open my code editor", expect: ["open_app"], target: /Cursor|PhpStorm|WebStorm|PyCharm|Xcode/, mayAsk: true },
   { say: "open the terminal", expect: ["open_app"], target: "Terminal" },
   { say: "open the password manager", expect: ["open_app"], target: /Bitwarden|Passwords/, mayAsk: true },
@@ -100,6 +108,15 @@ const CASES: Case[] = [
   { say: "go back", expect: ["go_back"], env: ON_RESULTS },
   { say: "open chrome and search for youtube", expect: ["open_app + web_search"] },
   { say: "search for cats and click the first result", expect: ["web_search + click_on"], env: ON_RESULTS },
+  // --- from real use, the second session ----------------------------------
+  { say: "Click on Wi-Fi.", expect: ["click_on"], target: /wi-?fi/i, env: { focusedApp: "System Settings", windowTitle: "Network" } },
+  { say: "click wifi", expect: ["click_on"], target: /wi-?fi/i, env: { focusedApp: "System Settings", windowTitle: "Network" } },
+  { say: "Play some video from YouTube.", expect: ["click_on"], target: "some video", env: ON_YOUTUBE },
+  { say: "Play some video.", expect: ["click_on"], target: "some video", env: ON_YOUTUBE },
+  { say: "play the first video", expect: ["click_on"], target: "first video", env: ON_YOUTUBE },
+  { say: "pause the music", expect: ["media_play_pause"] },
+  { say: "resume the music", expect: ["media_play_pause"] },
+  { say: "play", expect: ["media_play_pause"] },
   // --- closing and quitting ------------------------------------------------
   { say: "close the browser.", expect: ["close_app_window"], target: "Google Chrome", env: IN_CHROME },
   { say: "close all browsers.", expect: ["quit_app", "close_app_window"], target: "Every open web browser", env: BROWSERS_OPEN },

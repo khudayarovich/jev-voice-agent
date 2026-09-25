@@ -308,9 +308,10 @@ export function namedBrowser(transcript: string, available: Iterable<string>): s
  *   1. in the browser the user named ("open YouTube in Chrome")
  *   2. in the browser in front, since that is where they are looking
  *   3. in the browser they just used, by voice
- *   4. in a browser that is already open (the default one, if it is) — one
- *      with a window showing, when any has: Safari is often running with no
- *      window at all, and is not what anyone means by the open browser then
+ *   4. in a browser that is already open — with a window showing: a browser
+ *      running with no window is not what anyone means by the open browser.
+ *      Observed in real use: Firefox, running unseen in the background, was
+ *      picked for "open browser" over the default.
  *   5. in the default browser
  */
 export function pickBrowser(ctx: ActionContext): string | null {
@@ -320,9 +321,9 @@ export function pickBrowser(ctx: ActionContext): string | null {
   if (ctx.focusedApp && isBrowser(ctx.focusedApp)) return ctx.focusedApp;
   if (ctx.lastBrowser && available.includes(ctx.lastBrowser)) return ctx.lastBrowser;
 
+  // Which apps have a window is not always known; then running is the best guess.
   const running = ctx.runningApps.filter(isBrowser);
-  const showing = running.filter((b) => ctx.windowedApps?.includes(b));
-  const open = showing.length > 0 ? showing : running;
+  const open = ctx.windowedApps ? running.filter((b) => ctx.windowedApps!.includes(b)) : running;
   if (open.length === 0) return null;
   if (ctx.defaultBrowser && open.includes(ctx.defaultBrowser)) return null;
   // Several open, none of them the default: the most recently launched one.

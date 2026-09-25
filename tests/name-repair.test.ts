@@ -96,3 +96,15 @@ test("a two-consonant word is not rewritten on one consonant's evidence", () => 
   assert.equal(r.text, "Take a photo.");
   assert.deepEqual(r.repairs, []);
 });
+
+test("never turns a command word into an app", () => {
+  // From real use: "click on Wi-Fi" became "Clock on Wi-Fi" and opened the
+  // Date & Time settings; "click" alone opened the Clock app.
+  const apps = ["Clock", "Phone", "Photos", "Claude", "Termius"];
+  for (const said of ["Click on Wi-Fi.", "Click.", "tap sign in", "press the continue button", "play the first video"]) {
+    const r = repairAppNames(said, apps);
+    assert.equal(r.text, said, said);
+  }
+  // A real mangled name is still repaired.
+  assert.equal(repairAppNames("open clawed", apps).text, "open Claude");
+});

@@ -42,6 +42,7 @@ const NEEDS_OBJECT = new Set([
   "open", "launch", "start", "quit", "close", "exit", "hide", "type", "write",
   "dictate", "search", "google", "look", "set", "turn", "switch", "go", "run",
   "make", "take", "show", "visit", "find", "put", "move", "snap", "tile",
+  "click", "tap", "press", "select", "choose", "pick",
 ]);
 
 /**

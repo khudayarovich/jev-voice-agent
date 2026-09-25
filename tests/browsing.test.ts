@@ -98,3 +98,11 @@ test("clicking something destructive asks first; anything else does not", () => 
     assert.ok(!confirm({ target }), target);
   }
 });
+
+test("playing a video means clicking one", () => {
+  assert.equal(clickTarget("play some video from YouTube."), "some video");
+  assert.equal(resultNumber("some video"), 1);
+  assert.equal(resultNumber("a video"), 1);
+  assert.equal(clickTarget("play the first video"), "first video");
+  assert.equal(clickTarget("click on Wi-Fi."), "Wi-Fi");
+});

@@ -1,3 +1,6 @@
+import { ACTIONS, ACTION_KEYS } from "../actions/registry.ts";
+import { SETTINGS_PANES } from "../actions/settings-panes.ts";
+
 /**
  * Repairs mangled proper nouns in a transcript.
  *
@@ -53,9 +56,12 @@ function distance(a: string, b: string): number {
  *
  * Without this, "close" becomes "Clock" and "search" becomes "Safari" — the
  * repair would eat the command itself. These are the verbs and connectives the
- * registry is built from.
+ * registry is built from; every word of every command's example phrasings,
+ * and the names of the settings pages, are added to them below. Observed in
+ * real use before that: "click on Wi-Fi" became "Clock on Wi-Fi" and opened
+ * the Date & Time settings, and "take a photo" became "take a Phone".
  */
-const PROTECTED = new Set([
+const BASE_PROTECTED = [
   "open", "close", "quit", "exit", "switch", "launch", "start", "stop", "go",
   "show", "hide", "run", "play", "pause", "next", "previous", "back", "forward",
   "set", "turn", "make", "take", "type", "write", "search", "google", "find",
@@ -67,7 +73,26 @@ const PROTECTED = new Set([
   "browser", "app", "application", "file", "folder", "trash", "percent", "times",
   "hey", "jeff", "jev", "yes", "no", "okay", "ok",
   "photo", "picture", "selfie", "camera", "settings", "page", "site",
-]);
+];
+
+let protectedWords: Set<string> | null = null;
+
+/** The command vocabulary, built once: nothing in it is ever a misheard app name. */
+function isProtected(word: string): boolean {
+  if (!protectedWords) {
+    const words = new Set(BASE_PROTECTED);
+    const add = (phrase: string) => {
+      for (const w of phrase.toLowerCase().split(/[^a-z0-9]+/)) if (w.length >= 3) words.add(w);
+    };
+    for (const key of ACTION_KEYS) for (const example of ACTIONS[key].examples) add(example);
+    for (const pane of SETTINGS_PANES) {
+      add(pane.label);
+      for (const w of pane.words) add(w);
+    }
+    protectedWords = words;
+  }
+  return protectedWords.has(word);
+}
 
 /** "note" and "notes", "match" and "matches": one word, two numbers. */
 function sameWordPlural(a: string, b: string): boolean {
@@ -106,7 +131,7 @@ export function repairAppNames(transcript: string, appNames: string[]): RepairRe
     if (/^\s*$/.test(raw)) continue;
     const bare = raw.replace(/[^A-Za-z]/g, "");
     if (bare.length < 3) continue;
-    if (PROTECTED.has(bare.toLowerCase())) continue;
+    if (isProtected(bare.toLowerCase())) continue;
 
     // Already an exact app name? Leave it alone.
     if (appNames.some((a) => a.toLowerCase() === bare.toLowerCase())) continue;

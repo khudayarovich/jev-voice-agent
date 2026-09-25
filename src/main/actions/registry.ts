@@ -418,7 +418,8 @@ export const ACTIONS = {
 
   // --- media -------------------------------------------------------------
   media_play_pause: action({
-    describe: "Play or pause whatever music or video is currently playing.",
+    describe:
+      "Play or pause the music or video that is already playing or paused, like the play/pause key. Not for choosing something new to watch: that is a click or a search.",
     examples: ["play", "pause", "pause the music", "resume"],
     slots: {},
     async run(_a, os) {
@@ -703,8 +704,15 @@ export const ACTIONS = {
 
   click_on: action({
     describe:
-      "Click a link, button or search result that is showing on screen, by the words on it or by its position: 'click YouTube', 'click the first result', 'click Sign in', 'press the Continue button'. Acts on the window in front.",
-    examples: ["click youtube", "click the first result", "click sign in", "press the continue button", "open the second result"],
+      "Click a link, button, list item or search result that is showing on screen, by the words on it or by its position: 'click YouTube', 'click the first result', 'click on Wi-Fi', 'press the Continue button', and 'play the first video' or 'play some video' on a page of videos. Acts on the window in front.",
+    examples: [
+      "click youtube",
+      "click the first result",
+      "click sign in",
+      "press the continue button",
+      "open the second result",
+      "play the first video",
+    ],
     slots: { target: textSlot("The words on the thing to click, or which result", clickTarget) },
     confirmIf: ({ target }) => looksDestructive(target),
     async run({ target }, os) {

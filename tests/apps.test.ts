@@ -141,3 +141,10 @@ test("a browser with a window showing beats one that is only running", () => {
   // Neither showing a window: the default, as before.
   assert.equal(pickBrowser({ ...c, windowedApps: ["Finder"] }), null);
 });
+
+test("a browser running unseen is never 'the browser'", () => {
+  // From real use: Firefox, running with no window, was picked for "open
+  // browser" over the default, and every page after opened in it.
+  const c = ctx("open browser", { runningApps: ["Finder", "Firefox"], windowedApps: ["Finder", "Claude"] });
+  assert.equal(pickBrowser(c), null, "the default browser instead");
+});

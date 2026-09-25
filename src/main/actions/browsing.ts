@@ -112,10 +112,12 @@ export function clickTarget(transcript: string): string | null {
   const m = transcript
     .trim()
     .replace(/[.?!]+$/, "")
-    .match(/\b(?:click|press|tap|hit|select|choose|open)\s+(?:on\s+)?(.+)$/i);
+    .match(/\b(?:click|press|tap|hit|select|choose|open|play|watch)\s+(?:on\s+)?(.+)$/i);
   if (!m?.[1]) return null;
   const target = m[1]
-    .replace(/^(?:the|a|an|that|this)\s+/i, "")
+    // "play some video from YouTube" while on YouTube: the site is where, not what.
+    .replace(/\s+(?:on|from|in)\s+(?:youtube|google|this page|the page|this site|here|there)$/i, "")
+    .replace(/^(?:the|that|this)\s+/i, "")
     .replace(/\s+(?:button|link|tab|icon|option|menu item)$/i, "")
     .trim();
   return target || null;
@@ -126,7 +128,10 @@ export function clickTarget(transcript: string): string | null {
  * Null when the words name something rather than count it.
  */
 export function resultNumber(target: string): number | null {
-  const words = target.toLowerCase().replace(/^(?:the|a)\s+/, "").split(/\s+/);
+  const t = target.toLowerCase().trim().replace(/^the\s+/, "");
+  // "a video", "some video", "any result": the first one there is.
+  if (/^(?:a|an|any|some)\s+(?:(?:search\s+)?results?|links?|videos?|hits?)$/.test(t)) return 1;
+  const words = t.split(/\s+/);
   const n = ORDINALS[words[0] ?? ""];
   if (n === undefined) return null;
   const rest = words.slice(1).join(" ");
