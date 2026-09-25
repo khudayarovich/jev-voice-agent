@@ -18,7 +18,7 @@ function ctx(extra: Partial<ActionContext> = {}): ActionContext {
     focusedApp: "Finder",
     windowTitle: "",
     runningApps: ["Finder", "Safari", "Telegram"],
-    installedApps: ["Safari", "Notes", "ChatGPT", "ChatGPT Classic", "PhpStorm", "App Store", "Maps", "Telegram"],
+    installedApps: ["Safari", "Notes", "ChatGPT", "ChatGPT Classic", "PhpStorm", "App Store", "Maps", "Telegram", "OpenCode"],
     automations: [],
     ...extra,
   };
@@ -121,6 +121,7 @@ test("'open <an installed app>' needs no model", () => {
     ["open PHP storm", "PhpStorm"],
     ["open app store", "App Store"],
     ["switch to telegram please", "Telegram"],
+    ["Open an open code.", "OpenCode"], // speech put an article in
   ] as const) {
     const d = instantRoute(said, ctx());
     assert.equal(d?.action, "open_app", said);

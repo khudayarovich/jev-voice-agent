@@ -134,6 +134,10 @@ const CASES: Case[] = [
   { say: "Play a radio.", expect: ["click_on", "unknown_task"], env: { focusedApp: "Music", windowTitle: "Music" } },
   { say: "Can you up the sound?", expect: ["volume_up"] },
   { say: "Click on the next song.", expect: ["media_next", "click_on"] },
+  // --- talking to apps -------------------------------------------------------
+  { say: "Send a prompt to the open code saying hello.", expect: ["send_to_app"] },
+  { say: "Open an open code.", expect: ["open_app"], target: "OpenCode" },
+  { say: "open codex and send a prompt saying fix the tests", expect: ["open_app + send_to_app", "open_app + run_learned"] },
   // --- files ---------------------------------------------------------------
   { say: "rename the folder on the desktop to Hello World.", expect: ["rename_item"] },
   { say: "Rename the untitled folder on the desktop to a hello world.", expect: ["rename_item"] },

@@ -12,6 +12,15 @@ test("a message names its app and carries its text whole", () => {
   assert.deepEqual(messageRequest("send hello there to Telegram", APPS), { app: "Telegram", text: "hello there" });
 });
 
+test("the app may be said with an article, and the field it goes in is not the message", () => {
+  // From real use: each of these typed its own tail into OpenCode.
+  const apps = [...APPS, "OpenCode"];
+  assert.deepEqual(messageRequest("Send a prompt to the open code saying hello.", apps), { app: "OpenCode", text: "hello" });
+  assert.deepEqual(messageRequest("Send some tasks to the open code input.", apps), { app: "OpenCode", text: "some tasks" });
+  assert.deepEqual(messageRequest("Write hello to the input on the open code.", apps), { app: "OpenCode", text: "hello" });
+  assert.deepEqual(messageRequest("send hello world in the chat", apps), { app: null, text: "hello world" });
+});
+
 test("with no app named, the one in front is meant", () => {
   assert.deepEqual(messageRequest("send a prompt saying write a haiku about rain", APPS), { app: null, text: "write a haiku about rain" });
   assert.deepEqual(messageRequest("and send a message: hello", APPS), { app: null, text: "hello" });

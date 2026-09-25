@@ -143,7 +143,7 @@ export function actsEarly(
 // ---------------------------------------------------------------------------
 
 /** "open Safari", "launch the Terminal app", "switch to Slack, please". */
-const OPEN_APP = /^(?:please\s+)?(?:open|launch|start|switch to|bring up)\s+(?:the\s+)?(.+?)(?:\s+app|\s+application)?(?:\s+please)?$/;
+const OPEN_APP = /^(?:please\s+)?(?:open|launch|start|switch to|bring up)\s+(?:the\s+|an?\s+)?(.+?)(?:\s+app|\s+application)?(?:\s+please)?$/;
 
 /** "go to Battery", "open the display settings". */
 const OPEN_PANE =
