@@ -43,6 +43,19 @@ export interface KeyCombo {
   modifiers?: ("command" | "control" | "option" | "shift" | "fn")[];
 }
 
+/** A window showing on the desktop: its app and, when readable, its title. */
+export interface OpenWindow {
+  app: string;
+  title: string;
+}
+
+/** What a music player is doing. */
+export interface NowPlaying {
+  app: string;
+  state: "playing" | "paused" | "stopped";
+  track?: string;
+}
+
 export interface PlatformAdapter {
   readonly platform: "darwin" | "win32";
 
@@ -52,6 +65,8 @@ export interface PlatformAdapter {
   focus(): Promise<FocusContext>;
   /** Apps with a window showing on this desktop; a running app may have none. */
   windowedApps(): Promise<string[]>;
+  /** The windows showing on the desktop, front to back, with titles where readable. */
+  openWindows(): Promise<OpenWindow[]>;
   /** Just the frontmost app's name — cheaper than `focus()`. */
   frontApp(): Promise<string>;
   /**
@@ -103,6 +118,8 @@ export interface PlatformAdapter {
   mediaPlayPause(): Promise<void>;
   mediaNext(): Promise<void>;
   mediaPrevious(): Promise<void>;
+  /** What Music or Spotify is doing, if either is open; null when neither is. */
+  nowPlaying(): Promise<NowPlaying | null>;
 
   // --- input -------------------------------------------------------------
   keystroke(combo: KeyCombo): Promise<void>;

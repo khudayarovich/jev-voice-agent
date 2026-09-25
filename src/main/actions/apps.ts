@@ -35,7 +35,7 @@ const HINTS: Record<string, string> = {
   "script editor": "Writes and runs AppleScript.",
   automator: "Builds simple automations; the older cousin of Shortcuts.",
   "activity monitor": "Task manager: running processes, CPU and memory use.",
-  textedit: "A simple text editor, like Notepad.",
+  textedit: "TextEdit, Apple's simple editor for plain text and notes. Not a code editor, not a word processor.",
   notes: "Notes: jotting things down.",
   reminders: "To-do lists and reminders.",
   calendar: "Calendar, events and meetings.",
@@ -201,6 +201,8 @@ export interface AppNotes {
   lastBrowser?: string;
   /** Apps that are running. */
   running?: ReadonlySet<string>;
+  /** The title of each app's front window, for the apps showing one. */
+  windows?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -214,6 +216,8 @@ export function describeApp(name: string, notes: AppNotes = {}): string | null {
   if (notes.lastBrowser && key(notes.lastBrowser) === key(name)) extra.push("the browser the user just used");
   if (notes.frontmost && key(notes.frontmost) === key(name)) extra.push("in front right now");
   else if (notes.running?.has(name)) extra.push("open now");
+  const showing = notes.windows?.get(name);
+  if (showing) extra.push(`showing “${showing.slice(0, 40)}”`);
   if (notes.defaultBrowser && key(notes.defaultBrowser) === key(name)) extra.push("the user's default browser");
   if (!hint && extra.length === 0) return null;
   return [hint ?? "", extra.length ? `(${extra.join("; ")})` : ""].join(" ").trim();

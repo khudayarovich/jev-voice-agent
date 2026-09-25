@@ -11,6 +11,8 @@ import type {
   FocusContext,
   KeyCombo,
   PlatformAdapter,
+  NowPlaying,
+  OpenWindow,
 } from "../types.ts";
 import { browseScript, frontTabScript, parseFrontTab, scriptFamily } from "./browsers.ts";
 import { defaultBrowserId, parseMdls, parseMdlsDate } from "./launchservices.ts";
@@ -95,6 +97,17 @@ const MODIFIER_NAMES: Record<string, string> = {
   shift: "shift down",
   fn: "function down",
 };
+
+/** What a player is doing, in one round trip: "playing|Blue in Green". */
+const nowPlayingScript = (app: string) => `
+tell application ${asStr(app)}
+  set s to (player state as string)
+  set t to ""
+  try
+    set t to name of current track
+  end try
+  return s & "|" & t
+end tell`;
 
 export class MacPlatform implements PlatformAdapter {
   readonly platform = "darwin" as const;
@@ -229,6 +242,11 @@ export class MacPlatform implements PlatformAdapter {
   async windowedApps(): Promise<string[]> {
     const { stdout } = await exec(screenHelper(), ["windows"], { timeout: 2000 });
     return (JSON.parse(stdout) as { apps?: string[] }).apps ?? [];
+  }
+
+  async openWindows(): Promise<OpenWindow[]> {
+    const { stdout } = await exec(screenHelper(), ["windows"], { timeout: 2000 });
+    return ((JSON.parse(stdout) as { windows?: OpenWindow[] }).windows ?? []).filter((w) => w.app);
   }
 
   /** The frontmost app's name, from LaunchServices. ~10 ms. */
@@ -488,9 +506,40 @@ return appName & "\\n" & winTitle`;
 
   // --- media -------------------------------------------------------------
 
-  mediaPlayPause = () => this.keyCode(16, true);
-  mediaNext = () => this.keyCode(17, true);
-  mediaPrevious = () => this.keyCode(18, true);
+  mediaPlayPause = () => this.mediaKey("play");
+  mediaNext = () => this.mediaKey("next");
+  mediaPrevious = () => this.mediaKey("previous");
+
+  /**
+   * The keyboard's own media key, posted by the helper, so it reaches whatever
+   * is playing. Driving Music by AppleScript instead did nothing when the
+   * music was a video in Safari — and reported done.
+   */
+  private async mediaKey(key: "play" | "next" | "previous"): Promise<void> {
+    const { stdout } = await exec(screenHelper(), ["media", "--key", key], { timeout: 3000 });
+    const r = JSON.parse(stdout) as { ok: boolean; message?: string };
+    if (!r.ok) throw new Error(r.message ?? "Could not press the media key");
+  }
+
+  async nowPlaying(): Promise<NowPlaying | null> {
+    // Only players already running are asked: `tell application` launches one that is not.
+    const running = await this.runningApps();
+    let idle: NowPlaying | null = null;
+    for (const app of ["Music", "Spotify"]) {
+      if (!running.includes(app)) continue;
+      const out = await osa(nowPlayingScript(app), { timeoutMs: 2500 }).catch(() => "");
+      const [state = "", track = ""] = out.trim().split("|");
+      if (!state) continue;
+      const info: NowPlaying = {
+        app,
+        state: state === "playing" ? "playing" : state === "paused" ? "paused" : "stopped",
+        ...(track ? { track } : {}),
+      };
+      if (info.state === "playing") return info;
+      idle ??= info;
+    }
+    return idle;
+  }
 
   // --- input -------------------------------------------------------------
 
@@ -507,22 +556,8 @@ return appName & "\\n" & winTitle`;
     }
   }
 
-  /** Raw key code, optionally as a media key. */
-  private async keyCode(code: number, media = false): Promise<void> {
-    if (media) {
-      // Media keys are NX system-defined events; AppleScript cannot post them,
-      // so drive the frontmost media app instead.
-      const script = `
-tell application "System Events"
-  if (exists process "Music") then
-    tell application "Music" to ${code === 16 ? "playpause" : code === 17 ? "next track" : "previous track"}
-  else if (exists process "Spotify") then
-    tell application "Spotify" to ${code === 16 ? "playpause" : code === 17 ? "next track" : "previous track"}
-  end if
-end tell`;
-      await osa(script, { timeoutMs: 6000 });
-      return;
-    }
+  /** Raw key code. */
+  private async keyCode(code: number): Promise<void> {
     await osa(`tell application "System Events" to key code ${code}`, { timeoutMs: 5000 });
   }
 

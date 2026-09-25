@@ -4,7 +4,8 @@
 //   jev-ax click --nth 2            press the second search result on the page
 //   jev-ax toggle --text Bluetooth --state off   set a switch or checkbox, and say what it is now
 //   jev-ax page                     the address of the page in front, if a browser
-//   jev-ax windows                  the apps with a window showing on this desktop
+//   jev-ax windows                  the windows showing on this desktop, and their apps
+//   jev-ax media --key play|next|previous   press a media key, as the keyboard's own would
 //   jev-ax tree | headings          what the window exposes, for diagnosing
 //   jev-ax --version
 //
@@ -473,24 +474,50 @@ func toggle(text wanted: String?, on: Bool?, dryRun: Bool) -> Never {
 }
 
 /**
- * Apps with a window showing on this desktop. A browser can be running with no
- * window at all — Safari often is — and "the browser" means the one you can
- * see. Window owners need no permission to read; window titles would.
+ * The windows showing on this desktop, front to back, and the apps that own
+ * them. A browser can be running with no window at all — Safari often is —
+ * and "the browser" means the one you can see. Owners need no permission to
+ * read; titles need Screen Recording, and are blank without it.
  */
 func windowOwners() -> Never {
   let options = CGWindowListOption([.optionOnScreenOnly, .excludeDesktopElements])
   let list = (CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]) ?? []
   var owners: [String] = []
+  var windows: [[String: String]] = []
   for window in list {
     guard (window[kCGWindowLayer as String] as? Int) == 0,
           let bounds = window[kCGWindowBounds as String] as? [String: Any],
           ((bounds["Width"] as? Double) ?? 0) > 80, ((bounds["Height"] as? Double) ?? 0) > 80,
-          let owner = window[kCGWindowOwnerName as String] as? String,
-          !owners.contains(owner)
+          let owner = window[kCGWindowOwnerName as String] as? String
     else { continue }
-    owners.append(owner)
+    if windows.count < 24 {
+      windows.append(["app": owner, "title": (window[kCGWindowName as String] as? String) ?? ""])
+    }
+    if !owners.contains(owner) { owners.append(owner) }
   }
-  emit(["ok": true, "apps": owners])
+  emit(["ok": true, "apps": owners, "windows": windows])
+}
+
+/**
+ * Press a media key — play/pause, next, previous — the way the keyboard's own
+ * keys do, so it reaches whatever is playing: Music, Spotify, a video in a
+ * browser. AppleScript cannot post these: they are system-defined events.
+ */
+func pressMediaKey(_ name: String, dryRun: Bool) -> Never {
+  let keys: [String: Int32] = ["play": 16, "next": 17, "previous": 18] // NX_KEYTYPE_PLAY, _NEXT, _PREVIOUS
+  guard let key = keys[name] else { fail("usage", "media --key play|next|previous") }
+  if dryRun { emit(["ok": true, "key": name, "dryRun": true]) }
+  for down in [true, false] {
+    let flags = NSEvent.ModifierFlags(rawValue: down ? 0xa00 : 0xb00)
+    let data1 = (Int(key) << 16) | ((down ? 0xa : 0xb) << 8)
+    guard let event = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: flags,
+                                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
+                                         context: nil, subtype: 8, data1: data1, data2: -1),
+          let cg = event.cgEvent
+    else { fail("event", "Could not make the key event.") }
+    cg.post(tap: .cghidEventTap)
+  }
+  emit(["ok": true, "key": name])
 }
 
 /** Each heading on the page with its level and its ancestors: for tuning `results`. */
@@ -563,6 +590,8 @@ case "headings":
   headings()
 case "windows":
   windowOwners()
+case "media":
+  pressMediaKey(option("--key") ?? "", dryRun: dryRun)
 case "tree":
   tree(depth: option("--depth").flatMap { Int($0) } ?? 6)
 default:

@@ -131,7 +131,15 @@ const CASES: Case[] = [
   { say: "Open Yandex Music", expect: ["open_url", "unknown_task"], target: /music\.yandex|^$/ },
   { say: "Click on a radio.", expect: ["click_on"], target: "radio", env: { focusedApp: "Music", windowTitle: "Music" } },
   { say: "Click on a radio from the sidebar menu.", expect: ["click_on"], target: "radio", env: { focusedApp: "Music", windowTitle: "Music" } },
+  { say: "Play a radio.", expect: ["click_on", "unknown_task"], env: { focusedApp: "Music", windowTitle: "Music" } },
   { say: "Can you up the sound?", expect: ["volume_up"] },
+  { say: "Click on the next song.", expect: ["media_next", "click_on"] },
+  // --- what is on the screen ----------------------------------------------
+  { say: "what apps are open", expect: ["list_open_apps"] },
+  { say: "which apps are running right now", expect: ["list_open_apps"] },
+  { say: "what's playing", expect: ["now_playing"] },
+  { say: "what song is this", expect: ["now_playing"] },
+  { say: "close the youtube window", expect: ["close_app_window", "close_window"], target: /Safari|^$/, env: { focusedApp: "Finder", runningApps: ["Finder", "Safari", "Music"], windowedApps: ["Finder", "Safari", "Music"], openWindows: [{ app: "Finder", title: "Documents" }, { app: "Safari", title: "YouTube" }, { app: "Music", title: "Music" }] } },
   { say: "open telegram", expect: ["open_app"], target: "Telegram" },
   // --- closing and quitting ------------------------------------------------
   { say: "close the browser.", expect: ["close_app_window"], target: "Google Chrome", env: IN_CHROME },
@@ -165,14 +173,14 @@ async function main(): Promise<void> {
   const only = process.argv.slice(2).find((a) => !a.startsWith("-"))?.toLowerCase();
 
   const os = platform();
-  const [installed, running, automations, defaultBrowser, windowed] = await Promise.all([
-    os.listApps(), os.runningApps(), os.listAutomations(), os.defaultBrowser(), os.windowedApps().catch(() => undefined),
+  const [installed, running, automations, defaultBrowser, windows] = await Promise.all([
+    os.listApps(), os.runningApps(), os.listAutomations(), os.defaultBrowser(), os.openWindows().catch(() => undefined),
   ]);
   const base: Env = {
     focusedApp: "Finder",
     windowTitle: "",
     runningApps: running,
-    ...(windowed ? { windowedApps: windowed } : {}),
+    ...(windows ? { windowedApps: [...new Set(windows.map((w) => w.app))], openWindows: windows } : {}),
     installedApps: [...installed].sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0)).map((a) => a.name),
     automations,
     defaultBrowser,
@@ -186,7 +194,16 @@ async function main(): Promise<void> {
   const cases = CASES.filter((c) => !only || c.say.toLowerCase().includes(only));
   for (const c of cases) {
     const decideOne = async (clause: string): Promise<RouteDecision> => {
-      const ctx: ActionContext = { ...base, ...c.env, transcript: clause };
+      // A case that names the running apps must not be contradicted by this
+      // Mac's own windows: only those of the apps it names stay on screen.
+      const running = c.env?.runningApps;
+      const screen = running && !c.env?.windowedApps
+        ? {
+            windowedApps: (base.windowedApps ?? []).filter((a) => running.includes(a)),
+            openWindows: (base.openWindows ?? []).filter((w) => running.includes(w.app)),
+          }
+        : {};
+      const ctx: ActionContext = { ...base, ...screen, ...c.env, transcript: clause };
       return (settings.instantCommands ? instantRoute(clause, ctx) : null) ??
         (await route(ctx, { confidenceThreshold: settings.confidenceThreshold, offlineFallback: false }));
     };
@@ -207,7 +224,8 @@ async function main(): Promise<void> {
     const targetOk =
       c.target === undefined || (typeof c.target === "string" ? target === c.target : c.target.test(target));
     const asks = d.slotConfidence !== undefined && d.slotConfidence < SLOT_CONFIDENCE_MIN;
-    const acts = d.confidence >= settings.confidenceThreshold && (!d.reason || d.unknown === true) && !asks;
+    // "No command for that" is acted on at any confidence: it goes to the teacher.
+    const acts = d.unknown === true || (d.confidence >= settings.confidenceThreshold && !d.reason && !asks);
     const ok = actionOk && targetOk && (acts || (asks && c.mayAsk === true));
     if (ok) right++;
     if (!d.instant) {

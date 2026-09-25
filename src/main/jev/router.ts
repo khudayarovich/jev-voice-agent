@@ -76,8 +76,26 @@ function stateFor(ctx: ActionContext) {
     request: ctx.transcript,
     focused_app: ctx.focusedApp || "unknown",
     window_title: ctx.windowTitle || "",
+    // What is on the screen, front first: for "close the YouTube window" and
+    // "which apps are open", the agent sees what the user sees.
+    ...(ctx.windowedApps?.length ? { open_apps: ctx.windowedApps.slice(0, 12) } : {}),
+    ...(onScreen(ctx).length ? { on_screen: onScreen(ctx) } : {}),
     ...(ctx.recent?.length ? { recent_actions: ctx.recent } : {}),
   };
+}
+
+/** "Safari: YouTube", one per titled window, at most eight. */
+function onScreen(ctx: ActionContext): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const w of ctx.openWindows ?? []) {
+    const line = w.title ? `${w.app}: ${w.title.slice(0, 60)}` : "";
+    if (!line || seen.has(line)) continue;
+    seen.add(line);
+    out.push(line);
+    if (out.length === 8) break;
+  }
+  return out;
 }
 
 export interface RouteOptions {

@@ -1,3 +1,4 @@
+import { hudBody } from "../../shared/hud.ts";
 import type { AgentState, HudModel } from "../../shared/types.ts";
 
 /**
@@ -48,9 +49,10 @@ function render(m: HudModel): void {
   if (result && result !== lastResult) celebrate(result);
   lastResult = result;
 
-  const body = m.transcript || m.detail;
-  text.classList.toggle("partial", Boolean(m.transcript) && m.partial);
-  text.classList.toggle("detail", !m.transcript);
+  const body = hudBody(m);
+  const theirs = Boolean(m.transcript) && body === m.transcript;
+  text.classList.toggle("partial", theirs && m.partial);
+  text.classList.toggle("detail", !theirs);
   const textChanged = setText(body);
 
   const meta = result === "ok" ? (m.meta ?? "") : "";
@@ -69,7 +71,7 @@ function render(m: HudModel): void {
     setVisible(false);
   }
 
-  if (textChanged || stateChanged) fit();
+  if (textChanged || stateChanged) fit(!theirs);
   driveVisualizer();
 }
 
@@ -109,7 +111,8 @@ function setText(next: string): boolean {
  * Glide the pill to fit its text. The window cannot resize smoothly, so the
  * pill does it inside the window; CSS animates the change.
  */
-function fit(): void {
+function fit(wraps: boolean): void {
+  text.classList.remove("wrap"); // measured as one line
   const natural = words.scrollWidth;
   // padding-left, orb, gap, gap before the visualizer, padding-right — the
   // visualizer is always a flex item, so its gap counts even when it is empty.
@@ -122,7 +125,11 @@ function fit(): void {
   pill.style.setProperty("--w", `${Math.round(width)}px`);
   // Decided from the target width, not measured: mid-animation the pill is
   // still narrow, and measuring then faded out text that was about to fit.
-  text.classList.toggle("clip", wanted > MAX_WIDTH);
+  const overflow = wanted > MAX_WIDTH;
+  // The agent's own line wraps onto a second, so a question or a list can be
+  // read whole; a transcript keeps its newest words in view instead.
+  text.classList.toggle("wrap", overflow && wraps);
+  text.classList.toggle("clip", overflow && !wraps);
 }
 
 /** The pop of success, the shake of failure. */

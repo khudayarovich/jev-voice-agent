@@ -148,3 +148,9 @@ test("a browser running unseen is never 'the browser'", () => {
   const c = ctx("open browser", { runningApps: ["Finder", "Firefox"], windowedApps: ["Finder", "Claude"] });
   assert.equal(pickBrowser(c), null, "the default browser instead");
 });
+
+test("an app's note says what its window is showing", () => {
+  const windows = new Map([["Safari", "YouTube"], ["Music", "Music"]]);
+  assert.match(describeApp("Safari", { windows, running: new Set(["Safari"]) }) ?? "", /showing “YouTube”/);
+  assert.doesNotMatch(describeApp("Notes", { windows, running: new Set(["Notes"]) }) ?? "", /showing/);
+});

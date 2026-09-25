@@ -20,6 +20,8 @@ export interface ActionContext {
   runningApps: string[];
   /** Running apps with a window showing; undefined when that is not known. */
   windowedApps?: string[];
+  /** The windows showing, front to back, with their titles where those could be read. */
+  openWindows?: { app: string; title: string }[];
   installedApps: string[];
   automations: string[];
   /** The browser links open in by default, per LaunchServices. */

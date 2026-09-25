@@ -275,9 +275,12 @@ export function planSearch(transcript: string, query: string, windowTitle = ""):
 const STOPWORDS = new Set([
   "the", "a", "an", "to", "of", "it", "this", "that", "is", "are", "and",
   "for", "in", "on", "my", "me", "please", "some", "at",
+  // A question's opening words say nothing about which command it asks for.
+  "what", "whats", "which",
 ]);
 
-const wordsOf = (s: string): string[] => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+/** "what's playing" → ["whats", "playing"]: an apostrophe joins, it does not split. */
+const wordsOf = (s: string): string[] => s.toLowerCase().replace(/['’]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
 
 const DIGIT_WORDS: Record<string, string> = {
   zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5",

@@ -244,12 +244,12 @@ function refreshEnv(): Promise<Env> {
     os.listApps().catch(() => []),
     os.listAutomations().catch(() => [] as string[]),
     os.defaultBrowser().catch(() => ""),
-    os.windowedApps().catch(() => undefined),
-  ]).then(([focus, running, installed, automations, defaultBrowser, windowed]) => ({
+    os.openWindows().catch(() => undefined),
+  ]).then(([focus, running, installed, automations, defaultBrowser, windows]) => ({
     focusedApp: focus.app,
     windowTitle: focus.windowTitle ?? "",
     runningApps: running,
-    ...(windowed ? { windowedApps: windowed } : {}),
+    ...(windows ? { windowedApps: [...new Set(windows.map((w) => w.app))], openWindows: windows } : {}),
     // Most recently used first: when nothing was named and the router has to
     // offer a list, the likely answers should be at the top of it.
     installedApps: [...installed]

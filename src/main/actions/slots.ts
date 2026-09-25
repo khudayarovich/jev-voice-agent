@@ -62,6 +62,13 @@ function enumSlotsOf(action: ActionKey): [string, EnumSlot][] {
 
 const hasAppSlot = (action: ActionKey) => enumSlotsOf(action).some(([, s]) => s.group === "app");
 
+/** Each app's front window title: the first the desktop lists for it. */
+function frontTitles(windows: { app: string; title: string }[] | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const w of windows ?? []) if (w.title && !out.has(w.app)) out.set(w.app, w.title);
+  return out;
+}
+
 /**
  * Every app worth offering: running first, since they are the likeliest
  * referent, then installed ones in the order given (most recently used first).
@@ -98,6 +105,7 @@ export function appQuestion(ctx: ActionContext): SlotQuestion {
     frontmost: ctx.focusedApp,
     lastBrowser: ctx.lastBrowser,
     running: new Set(ctx.runningApps),
+    windows: frontTitles(ctx.openWindows),
   };
   const notes: Record<string, string> = {};
   for (const name of candidates) {

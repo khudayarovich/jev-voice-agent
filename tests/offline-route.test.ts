@@ -303,3 +303,61 @@ test("turning Wi-Fi off asks first: it takes the agent offline too", () => {
   assert.equal(d.action, "wifi_off");
   assert.ok(d.risk >= 2.5);
 });
+
+// --- what is on the screen, and what is playing ------------------------------
+
+test("a media key is pressed as the keyboard's would be, and reported as pressed when nothing says more", async () => {
+  // From real use: "next song" ran an AppleScript that did not compile, and
+  // "play" drove Music while the music was a video in Safari — reported done.
+  const { calls, os } = recorder({ nowPlaying: null });
+  const r = await execute("media_next", {}, os, ctx("next song"));
+  assert.deepEqual(calls.filter((c) => c.method === "mediaNext").length, 1);
+  assert.equal(r.detail, "Pressed next");
+});
+
+test("what a media key changed is what is reported", async () => {
+  const states = [
+    { app: "Music", state: "playing", track: "Blue in Green" },
+    { app: "Music", state: "playing", track: "So What" },
+  ];
+  const os = new Proxy({}, {
+    get: (_t, prop: string) => (prop === "platform" ? "darwin" : () => Promise.resolve(prop === "nowPlaying" ? states.shift() : undefined)),
+  }) as unknown as PlatformAdapter;
+  const r = await execute("media_next", {}, os, ctx("next song"));
+  assert.equal(r.detail, "Playing “So What” in Music");
+
+  const { os: paused } = recorder({ nowPlaying: { app: "Spotify", state: "paused", track: "Blue in Green" } });
+  // The same state before and after: the key went elsewhere, and that is said.
+  assert.equal((await execute("media_play_pause", {}, paused, ctx("play"))).detail, "Pressed play/pause");
+});
+
+test("asking what is playing changes nothing, and says what it found", async () => {
+  const { calls, os } = recorder({ nowPlaying: { app: "Music", state: "playing", track: "Blue in Green" } });
+  const r = await execute("now_playing", {}, os, ctx("what's playing"));
+  assert.equal(r.detail, "Playing “Blue in Green” in Music");
+  assert.deepEqual(calls.map((c) => c.method), ["nowPlaying"]);
+  const { os: quiet } = recorder({ nowPlaying: null });
+  assert.equal((await execute("now_playing", {}, quiet, ctx("what's playing"))).detail, "Nothing is playing in Music or Spotify");
+});
+
+test("asking which apps are open lists what is on screen, the front one first", async () => {
+  const { calls, os } = recorder();
+  const here = ctx("what apps are open", {
+    focusedApp: "Music",
+    windowedApps: ["Finder", "Safari", "Jev Voice Agent", "Music"],
+  });
+  const r = await execute("list_open_apps", {}, os, here);
+  assert.equal(r.detail, "Open: Music, Finder, Safari");
+  assert.deepEqual(calls, [], "a question changes nothing");
+  // Without the desktop's list, the running apps stand in.
+  const r2 = await execute("list_open_apps", {}, os, ctx("what apps are open"));
+  assert.equal(r2.detail, "Open: Finder, Safari");
+});
+
+test("the questions about the screen need no model", () => {
+  for (const [said, action] of [["what's playing", "now_playing"], ["what apps are open", "list_open_apps"], ["next song", "media_next"]] as const) {
+    const d = offlineRoute(ctx(said));
+    assert.equal(d.action, action, said);
+    assert.ok(d.confidence >= 0.55, `${said} at ${d.confidence}`);
+  }
+});

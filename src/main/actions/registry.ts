@@ -1,6 +1,6 @@
 import { parameterValue } from "../learning/lesson.ts";
 import { runLearned } from "../learning/run.ts";
-import type { PlatformAdapter } from "../platform/types.ts";
+import type { NowPlaying, PlatformAdapter } from "../platform/types.ts";
 import { expandApps, listNames, pickBrowser, withoutBrowser } from "./apps.ts";
 import { chooseTab, clickTarget, looksDestructive, resultNumber } from "./browsing.ts";
 import { KNOWN_SITE_NAMES, afterPhrase, extractUrl, parseCount, parsePercent, planSearch, shortlistBy } from "./parse.ts";
@@ -74,6 +74,31 @@ async function showPage(url: string, os: PlatformAdapter, ctx: ActionContext): P
  * One step of a learned command that is a built-in command: its arguments,
  * said as words, typed the way that command's slots take them.
  */
+/**
+ * What a media key did, when that can be seen. Music and Spotify say what
+ * they are playing; a video in a browser does not, so the key press is
+ * reported as one — not as done. Observed in real use: "play" and "next" were
+ * reported done with nothing playing at all.
+ */
+async function mediaOutcome(os: PlatformAdapter, before: NowPlaying | null, key: string): Promise<string> {
+  await new Promise((r) => setTimeout(r, 350));
+  const now = await os.nowPlaying().catch(() => null);
+  const changed = now && (!before || before.state !== now.state || before.track !== now.track);
+  if (!now || !changed) return `Pressed ${key}`;
+  if (now.state === "playing") return `Playing${now.track ? ` “${now.track}”` : ""} in ${now.app}`;
+  return `${now.state === "paused" ? "Paused" : "Stopped"} ${now.app}`;
+}
+
+/** The apps the user can see, the one in front first — and never this one. */
+function appsOnScreen(ctx: ActionContext): string[] {
+  const shown = ctx.windowedApps?.length ? ctx.windowedApps : ctx.runningApps;
+  const ours = new Set(["Jev Voice Agent", "JVA", "Electron"]);
+  const apps = shown.filter((a) => !ours.has(a));
+  return ctx.focusedApp && apps.includes(ctx.focusedApp)
+    ? [ctx.focusedApp, ...apps.filter((a) => a !== ctx.focusedApp)]
+    : apps;
+}
+
 async function runStep(key: string, args: Record<string, string>, os: PlatformAdapter, ctx: ActionContext): Promise<void> {
   const def = (ACTIONS as Record<string, (typeof ACTIONS)[ActionKey]>)[key];
   if (!def || key === "run_learned") throw new Error(`There is no ${key} command`);
@@ -488,8 +513,9 @@ export const ACTIONS = {
     examples: ["play", "pause", "pause the music", "resume"],
     slots: {},
     async run(_a, os) {
+      const before = await os.nowPlaying().catch(() => null);
       await os.mediaPlayPause();
-      return { detail: "Play/pause" };
+      return { detail: await mediaOutcome(os, before, "play/pause") };
     },
   }),
 
@@ -498,8 +524,9 @@ export const ACTIONS = {
     examples: ["next track", "skip this song", "next song"],
     slots: {},
     async run(_a, os) {
+      const before = await os.nowPlaying().catch(() => null);
       await os.mediaNext();
-      return { detail: "Next track" };
+      return { detail: await mediaOutcome(os, before, "next") };
     },
   }),
 
@@ -508,8 +535,36 @@ export const ACTIONS = {
     examples: ["previous track", "go back a song"],
     slots: {},
     async run(_a, os) {
+      const before = await os.nowPlaying().catch(() => null);
       await os.mediaPrevious();
-      return { detail: "Previous track" };
+      return { detail: await mediaOutcome(os, before, "previous") };
+    },
+  }),
+
+  now_playing: action({
+    describe:
+      "Say what music is playing right now — the song and the player. A question about the music, which changes nothing.",
+    examples: ["what's playing", "what song is this", "which song is playing", "what is playing right now"],
+    slots: {},
+    async run(_a, os) {
+      const now = await os.nowPlaying();
+      if (!now) return { detail: "Nothing is playing in Music or Spotify" };
+      if (now.state === "playing") return { detail: `Playing${now.track ? ` “${now.track}”` : ""} in ${now.app}` };
+      return { detail: `${now.app} is ${now.state}${now.track ? ` on “${now.track}”` : ""}` };
+    },
+  }),
+
+  list_open_apps: action({
+    describe:
+      "Say which apps are open — the ones with a window on screen, the one in front first. A question about the apps, which changes nothing.",
+    examples: ["what apps are open", "which apps are running", "what's open right now", "show me the open apps"],
+    slots: {},
+    async run(_a, _os, ctx) {
+      const apps = appsOnScreen(ctx);
+      if (apps.length === 0) return { detail: "No app has a window open" };
+      const shown = apps.slice(0, 8);
+      const more = apps.length - shown.length;
+      return { detail: `Open: ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}` };
     },
   }),
 

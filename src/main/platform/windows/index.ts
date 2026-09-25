@@ -1,4 +1,13 @@
-import type { AppInfo, BrowserTab, ClickResult, FocusContext, KeyCombo, PlatformAdapter } from "../types.ts";
+import type {
+  AppInfo,
+  BrowserTab,
+  ClickResult,
+  FocusContext,
+  KeyCombo,
+  NowPlaying,
+  OpenWindow,
+  PlatformAdapter,
+} from "../types.ts";
 import { NotImplementedError } from "../types.ts";
 
 /**
@@ -40,6 +49,9 @@ export class WindowsPlatform implements PlatformAdapter {
     return Promise.resolve({ app: "" });
   }
   windowedApps(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+  openWindows(): Promise<OpenWindow[]> {
     return Promise.resolve([]);
   }
   frontApp(): Promise<string> {
@@ -86,6 +98,7 @@ export class WindowsPlatform implements PlatformAdapter {
   mediaPlayPause(): Promise<void> { this.nope("Media keys"); }
   mediaNext(): Promise<void> { this.nope("Media keys"); }
   mediaPrevious(): Promise<void> { this.nope("Media keys"); }
+  nowPlaying(): Promise<NowPlaying | null> { return Promise.resolve(null); }
 
   keystroke(_combo: KeyCombo): Promise<void> { this.nope("Synthetic keystrokes"); }
   typeText(): Promise<void> { this.nope("Typing text"); }
