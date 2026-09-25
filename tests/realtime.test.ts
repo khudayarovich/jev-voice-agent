@@ -164,3 +164,15 @@ test("no example phrasing is claimed by two actions", () => {
     }
   }
 });
+
+test("without the wake word, speech must be clearly meant for the agent", async () => {
+  const { actsEarly, ADDRESSED_MIN, FOLLOWUP_ADDRESSED_MIN } = await import("../src/main/actions/realtime.ts");
+  // From real use: a video playing nearby, heard in an open conversation,
+  // scored 0.48 and opened System Settings.
+  const d = {
+    action: "open_settings" as const, args: { pane: "System Settings" }, confidence: 0.74,
+    addressed: 0.48, risk: 0, offline: false, ms: 0, inputTokens: 0,
+  };
+  assert.equal(actsEarly(d, "open settings", 0.55, ADDRESSED_MIN), true, "with the wake word: fine");
+  assert.equal(actsEarly(d, "open settings", 0.55, FOLLOWUP_ADDRESSED_MIN), false, "without it: not enough");
+});

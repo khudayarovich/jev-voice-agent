@@ -365,6 +365,49 @@ export const ACTIONS = {
     },
   }),
 
+  bluetooth_on: action({
+    describe: "Turn Bluetooth on, so Bluetooth headphones, keyboards and mice can connect.",
+    examples: ["turn on bluetooth", "enable bluetooth", "bluetooth on", "switch bluetooth on"],
+    slots: {},
+    async run(_a, os) {
+      await os.setBluetooth(true);
+      return { detail: "Bluetooth on", app: "System Settings" };
+    },
+  }),
+
+  bluetooth_off: action({
+    describe: "Turn Bluetooth off, disconnecting Bluetooth devices such as headphones, keyboards and mice.",
+    examples: ["turn off bluetooth", "disable bluetooth", "bluetooth off", "switch bluetooth off"],
+    slots: {},
+    async run(_a, os) {
+      await os.setBluetooth(false);
+      return { detail: "Bluetooth off", app: "System Settings" };
+    },
+  }),
+
+  wifi_on: action({
+    describe: "Turn Wi-Fi on, reconnecting this Mac to the internet over Wi-Fi.",
+    examples: ["turn on wifi", "enable wifi", "wifi on", "turn wifi back on"],
+    slots: {},
+    async run(_a, os) {
+      await os.setWifi(true);
+      return { detail: "Wi-Fi on" };
+    },
+  }),
+
+  wifi_off: action({
+    describe: "Turn Wi-Fi off, disconnecting this Mac from the internet over Wi-Fi.",
+    examples: ["turn off wifi", "disable wifi", "wifi off"],
+    // Takes the agent offline too: only commands it can decide on this Mac,
+    // like "turn on Wi-Fi", keep working until it is back.
+    destructive: true,
+    slots: {},
+    async run(_a, os) {
+      await os.setWifi(false);
+      return { detail: "Wi-Fi off" };
+    },
+  }),
+
   dark_mode_on: action({
     describe: "Switch the system appearance to dark.",
     examples: ["dark mode", "turn on dark mode", "go dark"],
@@ -769,7 +812,7 @@ export const ACTIONS = {
   // --- settings ----------------------------------------------------------
   open_settings: action({
     describe:
-      "Open System Settings, or one page of it such as Wi-Fi, Bluetooth, Displays, Sound, Battery, Notifications, Privacy & Security or Keyboard — including to turn Wi-Fi or Bluetooth on or off, which is done on that page.",
+      "Open System Settings, or one page of it such as Wi-Fi, Bluetooth, Displays, Sound, Battery, Notifications, Privacy & Security or Keyboard. Only opens the page: turning Wi-Fi or Bluetooth on or off are commands of their own.",
     examples: ["open bluetooth settings", "open wifi settings", "show display settings", "open sound preferences", "open settings"],
     slots: {
       pane: enumSlot(

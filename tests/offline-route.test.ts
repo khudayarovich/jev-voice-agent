@@ -247,3 +247,26 @@ test("offline confidence stays below a confident threshold", () => {
   const d = offlineRoute(ctx("open safari"));
   assert.ok(d.confidence < 0.8, `offline confidence was ${d.confidence}`);
 });
+
+test("turning Bluetooth off switches it, not merely opens its page", async () => {
+  // From real use: "Turn off Bluetooth" opened the Bluetooth settings page,
+  // reported done, and Bluetooth stayed on.
+  for (const [phrase, action, call] of [
+    ["turn off bluetooth", "bluetooth_off", { method: "setBluetooth", args: [false] }],
+    ["disable bluetooth", "bluetooth_off", { method: "setBluetooth", args: [false] }],
+    ["turn on bluetooth", "bluetooth_on", { method: "setBluetooth", args: [true] }],
+    ["turn on wifi", "wifi_on", { method: "setWifi", args: [true] }],
+  ] as const) {
+    const d = offlineRoute(ctx(phrase));
+    assert.equal(d.action, action, phrase);
+    const { calls, os } = recorder();
+    await execute(d.action!, d.args, os, ctx(phrase));
+    assert.deepEqual(calls, [call], phrase);
+  }
+});
+
+test("turning Wi-Fi off asks first: it takes the agent offline too", () => {
+  const d = offlineRoute(ctx("turn off wifi"));
+  assert.equal(d.action, "wifi_off");
+  assert.ok(d.risk >= 2.5);
+});

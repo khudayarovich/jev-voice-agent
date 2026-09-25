@@ -2,6 +2,7 @@
 //
 //   jev-ax click --text "YouTube"   press the link or button whose words match best
 //   jev-ax click --nth 2            press the second search result on the page
+//   jev-ax toggle --text Bluetooth --state off   set a switch or checkbox, and say what it is now
 //   jev-ax page                     the address of the page in front, if a browser
 //   jev-ax windows                  the apps with a window showing on this desktop
 //   jev-ax tree | headings          what the window exposes, for diagnosing
@@ -148,7 +149,7 @@ func search(_ root: AXUIElement, key: String, words: String?, limit: Int) -> [AX
 /** Everything pressable in a native window, walked breadth first within a budget. */
 func pressables(in window: AXUIElement, budget: Int = 4000) -> [AXUIElement] {
   let kinds: Set<String> = [
-    "AXButton", "AXLink", "AXMenuItem", "AXMenuButton", "AXPopUpButton", "AXCheckBox",
+    "AXButton", "AXLink", "AXMenuItem", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXSwitch",
     "AXRadioButton", "AXTab", "AXDisclosureTriangle", "AXCell", "AXRow",
   ]
   var queue: [AXUIElement] = [window]
@@ -385,6 +386,84 @@ func click(text wanted: String?, nth: Int?, dryRun: Bool) -> Never {
 }
 
 /**
+ * The name of a switch. Settings panes often leave the switch itself unnamed
+ * and put its name beside it — a row holding the text "Bluetooth" and a bare
+ * switch — so the linked title, else the nearest text before it in its row,
+ * names it.
+ */
+func switchLabel(_ element: AXUIElement) -> String {
+  let own = label(element)
+  if !own.isEmpty { return own }
+  if let titled = attribute(element, kAXTitleUIElementAttribute as String) {
+    let t = label(titled as! AXUIElement)
+    if !t.isEmpty { return t }
+  }
+  guard let row = parent(element) else { return "" }
+  var nearest = ""
+  for sibling in children(row) {
+    if CFEqual(sibling, element) { break }
+    if role(sibling) == (kAXStaticTextRole as String), let v = attribute(sibling, kAXValueAttribute as String) as? String,
+       !v.trimmingCharacters(in: .whitespaces).isEmpty {
+      nearest = v
+    }
+  }
+  return nearest
+}
+
+/** Whether a switch or checkbox is on: its value is 1 or 0. */
+func isOn(_ element: AXUIElement) -> Bool? {
+  (attribute(element, kAXValueAttribute as String) as? NSNumber).map { $0.intValue != 0 }
+}
+
+/**
+ * Set a switch — System Settings' Bluetooth, say — to on or off, and report
+ * what it is afterwards, read back rather than assumed: a switch macOS refuses
+ * to flip, or flips only after a question of its own, must not be reported as
+ * done. The window may still be drawing when asked, so it is looked for for a
+ * few seconds.
+ */
+func toggle(text wanted: String?, on: Bool?, dryRun: Bool) -> Never {
+  guard let wanted = wanted, !normalized(wanted).isEmpty else { fail("usage", "No switch was named.") }
+  let (_, window, appName) = focusedWindow()
+  var best: (element: AXUIElement, label: String, score: Int)? = nil
+  for attempt in 0..<20 {
+    best = nil
+    for element in pressables(in: window) {
+      let r = role(element)
+      let sub = text(element, kAXSubroleAttribute as String)
+      guard r == "AXCheckBox" || r == "AXSwitch" || sub == "AXSwitch", isOn(element) != nil else { continue }
+      let l = switchLabel(element)
+      let s = score(label: l, link: nil, wanted: wanted)
+      if s > 0, s > (best?.score ?? 0) { best = (element, l, s) }
+    }
+    if best != nil { break }
+    if attempt < 19 { usleep(150_000) }
+  }
+  guard let found = best, let before = isOn(found.element) else {
+    fail("not-found", "Couldn't find a \"\(wanted)\" switch in \(appName.isEmpty ? "the window in front" : appName).")
+  }
+  var fields: [String: Any] = ["ok": true, "label": found.label, "role": role(found.element), "before": before]
+  let target = on ?? !before
+  if dryRun || before == target {
+    fields["after"] = before
+    emit(fields)
+  }
+  guard AXUIElementPerformAction(found.element, kAXPressAction as CFString) == .success else {
+    fail("not-pressable", "Found the \(found.label) switch, but it cannot be pressed.")
+  }
+  var after = isOn(found.element) ?? before
+  for _ in 0..<10 where after == before {
+    usleep(150_000)
+    after = isOn(found.element) ?? before
+  }
+  fields["after"] = after
+  if after != target {
+    fail("unchanged", "\(found.label) is still \(after ? "on" : "off") — macOS may be asking to confirm.")
+  }
+  emit(fields)
+}
+
+/**
  * Apps with a window showing on this desktop. A browser can be running with no
  * window at all — Safari often is — and "the browser" means the one you can
  * see. Window owners need no permission to read; window titles would.
@@ -466,6 +545,9 @@ case "--version":
 case "click":
   let nth = option("--nth").flatMap { Int($0) }
   click(text: option("--text"), nth: nth, dryRun: dryRun)
+case "toggle":
+  let state = option("--state")
+  toggle(text: option("--text"), on: state == "on" ? true : state == "off" ? false : nil, dryRun: dryRun)
 case "page":
   currentPage()
 case "headings":

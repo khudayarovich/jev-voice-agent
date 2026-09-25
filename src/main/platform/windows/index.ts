@@ -78,6 +78,8 @@ export class WindowsPlatform implements PlatformAdapter {
   sleepSystem(): Promise<void> { this.nope("System sleep"); }
   lockScreen(): Promise<void> { this.nope("Locking the screen"); }
   setDarkMode(): Promise<void> { this.nope("Dark mode"); }
+  setWifi(): Promise<void> { this.nope("Wi-Fi"); }
+  setBluetooth(): Promise<void> { this.nope("Bluetooth"); }
   setDoNotDisturb(): Promise<void> { this.nope("Do Not Disturb"); }
   emptyTrash(): Promise<void> { this.nope("Emptying the Recycle Bin"); }
 

@@ -8,6 +8,7 @@ import { execute, isDismissal, missingSlots, readClarification, readConfirmation
 import { rankActions } from "./actions/rank.ts";
 import {
   ADDRESSED_MIN,
+  FOLLOWUP_ADDRESSED_MIN,
   SLOT_CONFIDENCE_MIN,
   actsEarly,
   completedClauses,
@@ -389,6 +390,13 @@ interface Session {
   /** Only the newest utterance of a capture may act. */
   generation: number;
   finished: boolean;
+  /** How the capture began: with the wake word, the hotkey, or mid-conversation. */
+  trigger?: TriggerKind;
+}
+
+/** How sure Jev must be the words were meant for the agent. */
+function addressedMin(trigger: TriggerKind | undefined): number {
+  return trigger === "followup" ? FOLLOWUP_ADDRESSED_MIN : ADDRESSED_MIN;
 }
 const sessions = new Map<number, Session>();
 
@@ -432,7 +440,10 @@ function wirePipeline(p: AudioPipeline): void {
 
   // Someone started talking. It may not be for us, but opening the connection
   // costs nothing and saves a handshake if it is.
-  p.on("capture", () => jev.warm());
+  p.on("capture", (info) => {
+    sessionFor(info.id).trigger = info.trigger;
+    jev.warm();
+  });
 
   p.on("trigger", (kind: TriggerKind) => {
     fileLog("pipeline", "trigger", { kind });
@@ -572,11 +583,12 @@ async function runEarly(
   const { d, e } = await decided;
   await serially(async () => {
     if (s.halted || s.finished) return;
-    if (!actsEarly(d, clause, getSettings().confidenceThreshold) || needsConfirmation(d)) {
+    const min = addressedMin(s.trigger);
+    if (!actsEarly(d, clause, getSettings().confidenceThreshold, min) || needsConfirmation(d)) {
       s.halted = true;
       return;
     }
-    const r = await act(d, e, true, clause);
+    const r = await act(d, e, true, clause, min);
     fileLog("agent", "ran-early", { clause, action: d.action, outcome: r.outcome, detail: r.detail });
     if (r.outcome !== "ok") {
       s.halted = true;
@@ -619,6 +631,7 @@ let clarifying: Clarifying | null = null;
 
 async function onUtterance(u: Utterance): Promise<void> {
   const s = sessionFor(u.captureId);
+  s.trigger = u.trigger;
   const generation = ++s.generation;
   hudEpoch++;
   fileLog("pipeline", "utterance", {
@@ -671,7 +684,7 @@ async function onUtterance(u: Utterance): Promise<void> {
   const now =
     getSettings().realtime &&
     !u.final &&
-    clauses.every((c, i) => actsEarly(decisions[i]!, c, getSettings().confidenceThreshold));
+    clauses.every((c, i) => actsEarly(decisions[i]!, c, getSettings().confidenceThreshold, addressedMin(u.trigger)));
   if (now) {
     // False when they have already started talking again: a longer utterance
     // is on its way, and it will reuse these routes if the words match.
@@ -714,7 +727,7 @@ async function runClauses(
 
   for (let i = 0; i < clauses.length; i++) {
     const d = decisions[i]!;
-    const r = await act(d, e, i < clauses.length - 1, clauses[i]!);
+    const r = await act(d, e, i < clauses.length - 1, clauses[i]!, addressedMin(u.trigger));
     last = r;
 
     if (r.confirm) {
@@ -786,10 +799,16 @@ function needsConfirmation(d: RouteDecision): boolean {
  * Turn one routing decision into an outcome: run it, refuse it, or ask first.
  * `more` says another clause follows, so wait for focus to settle.
  */
-async function act(d: RouteDecision, e: Env, more: boolean, clause: string): Promise<Outcome> {
+async function act(
+  d: RouteDecision,
+  e: Env,
+  more: boolean,
+  clause: string,
+  minAddressed: number = ADDRESSED_MIN,
+): Promise<Outcome> {
   // Not addressed to the agent - most likely a false wake while the user was
-  // talking to someone else.
-  if (d.addressed < ADDRESSED_MIN) {
+  // talking to someone else, or nearby speech in an open conversation.
+  if (d.addressed < minAddressed) {
     return { outcome: "cancelled", action: null, detail: "not addressed to the agent", decision: d };
   }
   if (!d.action) {
@@ -1008,6 +1027,8 @@ function confirmQuestion(action: ActionKey, args: Record<string, string | number
       return "Empty the Trash? This can't be undone.";
     case "sleep_system":
       return "Put the Mac to sleep?";
+    case "wifi_off":
+      return "Turn off Wi-Fi? You'll be offline.";
     case "click_on":
       return `Click “${String(args.target ?? "")}”?`;
     default:

@@ -93,6 +93,9 @@ export interface PlatformAdapter {
   sleepSystem(): Promise<void>;
   lockScreen(): Promise<void>;
   setDarkMode(on: boolean): Promise<void>;
+  setWifi(on: boolean): Promise<void>;
+  /** Flips the switch in Settings, and fails unless it really changed. */
+  setBluetooth(on: boolean): Promise<void>;
   setDoNotDisturb(on: boolean): Promise<void>;
   emptyTrash(): Promise<void>;
 

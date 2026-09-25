@@ -95,6 +95,14 @@ export function completedClauses(transcript: string): string[] {
 export const ADDRESSED_MIN = 0.35;
 
 /**
+ * The same, for speech in an open conversation, which needs no wake word — so
+ * whatever is said nearby arrives as if it were a command. Measured in real
+ * use: the user's own follow-up commands scored 0.80–0.96, while a video
+ * playing in the room scored 0.12–0.48, and at 0.48 it opened System Settings.
+ */
+export const FOLLOWUP_ADDRESSED_MIN = 0.6;
+
+/**
  * Below this, Jev is unsure which app (or other option) was meant, even if the
  * command itself is clear — "open my code editor" with several installed came
  * back at 0.50. Better to ask than to open the wrong thing. The same bar as the
@@ -110,9 +118,14 @@ export const SLOT_CONFIDENCE_MIN = 0.55;
  * end of the text. Destructive actions pass — acting on them early only means
  * asking "are you sure?" sooner.
  */
-export function actsEarly(d: RouteDecision, clause: string, confidenceThreshold: number): boolean {
+export function actsEarly(
+  d: RouteDecision,
+  clause: string,
+  confidenceThreshold: number,
+  addressedMin = ADDRESSED_MIN,
+): boolean {
   if (!d.action) return false;
-  if (d.addressed < ADDRESSED_MIN) return false;
+  if (d.addressed < addressedMin) return false;
   if (d.confidence < confidenceThreshold) return false;
   if (d.slotConfidence !== undefined && d.slotConfidence < SLOT_CONFIDENCE_MIN) return false;
   if (missingSlots(d.action, d.args).length > 0) return false;

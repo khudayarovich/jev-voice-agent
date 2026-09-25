@@ -126,7 +126,12 @@ const CASES: Case[] = [
   // --- settings pages ------------------------------------------------------
   { say: "open bluetooth settings", expect: ["open_settings"], target: "Bluetooth" },
   { say: "open wifi settings", expect: ["open_settings"], target: "Wi-Fi" },
-  { say: "turn on bluetooth", expect: ["open_settings"], target: "Bluetooth" },
+  { say: "turn on bluetooth", expect: ["bluetooth_on"] },
+  { say: "Turn off Bluetooth.", expect: ["bluetooth_off"], env: { focusedApp: "System Settings", windowTitle: "Bluetooth" } },
+  { say: "disable bluetooth", expect: ["bluetooth_off"] },
+  { say: "turn off wifi", expect: ["wifi_off"] },
+  { say: "turn the wifi back on", expect: ["wifi_on"] },
+  { say: "go to bluetooth", expect: ["open_settings", "click_on"], target: /Bluetooth/, env: { focusedApp: "System Settings", windowTitle: "System Settings" } },
   { say: "change my wallpaper", expect: ["open_settings"], target: "Wallpaper" },
   { say: "show me the display settings", expect: ["open_settings"], target: "Displays" },
   { say: "check for software updates", expect: ["open_settings"], target: "Software Update" },

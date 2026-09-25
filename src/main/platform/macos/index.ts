@@ -15,6 +15,7 @@ import type {
 import { browseScript, frontTabScript, parseFrontTab, scriptFamily } from "./browsers.ts";
 import { defaultBrowserId, parseMdls, parseMdlsDate } from "./launchservices.ts";
 import { parseDisplayName, parseForegroundApps } from "./lsappinfo.ts";
+import { wifiDevice } from "./network.ts";
 import { asStr, osa, runAppleScript } from "./osascript.ts";
 
 const exec = promisify(execFile);
@@ -437,6 +438,37 @@ return appName & "\\n" & winTitle`;
     await osa(
       `tell application "System Events" to tell appearance preferences to set dark mode to ${on ? "true" : "false"}`,
     );
+  }
+
+  async setWifi(on: boolean): Promise<void> {
+    const { stdout } = await exec("/usr/sbin/networksetup", ["-listallhardwareports"], { timeout: 5000 });
+    const device = wifiDevice(stdout);
+    if (!device) throw new Error("This Mac has no Wi-Fi");
+    await exec("/usr/sbin/networksetup", ["-setairportpower", device, on ? "on" : "off"], { timeout: 10_000 });
+  }
+
+  /**
+   * There is no public command for Bluetooth, so this does what a person does:
+   * opens its page in System Settings and flips the switch — through the
+   * clicking helper, which reads the switch back and fails if it did not move
+   * (macOS asks first when a Bluetooth keyboard or mouse would drop).
+   */
+  async setBluetooth(on: boolean): Promise<void> {
+    await exec("/usr/bin/open", ["x-apple.systempreferences:com.apple.BluetoothSettings"], { timeout: 6000 });
+    if (!(await this.waitForFrontmost((a) => a === "System Settings", 5000))) {
+      throw new Error("System Settings did not open");
+    }
+    const { stdout } = await exec(screenHelper(), ["toggle", "--text", "Bluetooth", "--state", on ? "on" : "off"], {
+      timeout: 10_000,
+    });
+    const r = JSON.parse(stdout) as { ok: boolean; error?: string; message?: string };
+    if (!r.ok) {
+      throw new Error(
+        r.error === "no-permission"
+          ? "Accessibility permission is needed to switch Bluetooth. Grant it in Settings → Permissions."
+          : (r.message ?? "Could not switch Bluetooth"),
+      );
+    }
   }
 
   async setDoNotDisturb(on: boolean): Promise<void> {
