@@ -127,6 +127,12 @@ const CASES: Case[] = [
   { say: "show hidden files in finder", expect: ["unknown_task"] },
   { say: "open a private window in chrome", expect: ["unknown_task", "new_window"] },
   { say: "search amazon for headphones", expect: ["web_search"] },
+  // --- from real use, the third session -----------------------------------
+  { say: "Open Yandex Music", expect: ["open_url", "unknown_task"], target: /music\.yandex|^$/ },
+  { say: "Click on a radio.", expect: ["click_on"], target: "radio", env: { focusedApp: "Music", windowTitle: "Music" } },
+  { say: "Click on a radio from the sidebar menu.", expect: ["click_on"], target: "radio", env: { focusedApp: "Music", windowTitle: "Music" } },
+  { say: "Can you up the sound?", expect: ["volume_up"] },
+  { say: "open telegram", expect: ["open_app"], target: "Telegram" },
   // --- closing and quitting ------------------------------------------------
   { say: "close the browser.", expect: ["close_app_window"], target: "Google Chrome", env: IN_CHROME },
   { say: "close all browsers.", expect: ["quit_app", "close_app_window"], target: "Every open web browser", env: BROWSERS_OPEN },

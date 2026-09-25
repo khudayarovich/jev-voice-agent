@@ -114,12 +114,16 @@ export function clickTarget(transcript: string): string | null {
     .replace(/[.?!]+$/, "")
     .match(/\b(?:click|press|tap|hit|select|choose|open|play|watch)\s+(?:on\s+)?(.+)$/i);
   if (!m?.[1]) return null;
-  const target = m[1]
+  let target = m[1]
     // "play some video from YouTube" while on YouTube: the site is where, not what.
     .replace(/\s+(?:on|from|in)\s+(?:youtube|google|this page|the page|this site|here|there)$/i, "")
+    // "click on radio from the sidebar menu": where it is, not what it says.
+    .replace(/\s+(?:from|in|on|at)\s+(?:the\s+)?(?:side\s*bar(?:\s+menu)?|menu(?:\s+bar)?|list|tool\s*bar|left|right|top|bottom|screen|window)$/i, "")
     .replace(/^(?:the|that|this)\s+/i, "")
     .replace(/\s+(?:button|link|tab|icon|option|menu item)$/i, "")
     .trim();
+  // "a radio" is Radio; "a video" is still the first video there is.
+  if (resultNumber(target) === null) target = target.replace(/^(?:a|an)\s+/i, "");
   return target || null;
 }
 

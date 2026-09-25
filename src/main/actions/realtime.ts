@@ -2,6 +2,7 @@ import { parameterValue } from "../learning/lesson.ts";
 import { missingSlots } from "./execute.ts";
 import { rankActions } from "./rank.ts";
 import { ACTIONS, ACTION_KEYS, type ActionKey } from "./registry.ts";
+import { siteNamed } from "./parse.ts";
 import { type RouteDecision, certainChoice, resolveLocalSlots } from "./resolve.ts";
 import { TEXT_PAYLOAD, clausesOf } from "./split.ts";
 import type { ActionContext } from "./types.ts";
@@ -143,6 +144,9 @@ export function actsEarly(
 /** "open Safari", "launch the Terminal app", "switch to Slack, please". */
 const OPEN_APP = /^(?:please\s+)?(?:open|launch|start|switch to|bring up)\s+(?:the\s+)?(.+?)(?:\s+app|\s+application)?(?:\s+please)?$/;
 
+/** "open Yandex Music", "go to the GitHub website". */
+const OPEN_SITE = /^(?:please\s+)?(?:open|go to|visit|take me to)\s+(?:the\s+)?(.+?)(?:\s+website|\s+site)?(?:\s+please)?$/;
+
 /**
  * Every example phrasing, normalised, mapped to its action — or to null when
  * two actions share it, which makes it ambiguous by definition: Jev decides.
@@ -186,6 +190,13 @@ export function instantRoute(transcript: string, ctx: ActionContext): RouteDecis
     const app = [...ctx.runningApps, ...ctx.installedApps].find((a) => squash(a) === wanted);
     if (app) return decision("open_app", { app });
   }
+
+  // A site known by name, with no app of exactly that name: a website, for
+  // certain. Observed in real use: "open Yandex Music" opened Apple's Music,
+  // and Jev, told the site's name, was still only 59% sure.
+  const site = t.match(OPEN_SITE)?.[1];
+  const url = site ? siteNamed(site) : null;
+  if (url) return decision("open_url", { url });
 
   // A learned command, said the way it was taught: no round trip either.
   for (const learned of ctx.learned ?? []) {

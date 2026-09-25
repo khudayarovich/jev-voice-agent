@@ -139,6 +139,17 @@ test("an exact registry phrasing needs no model either", () => {
   assert.deepEqual(instantRoute("open youtube", ctx())?.args, { url: "youtube.com" });
 });
 
+test("a site named alone opens at once, unless an app has that exact name", () => {
+  // Observed in real use: "Open Yandex Music" opened Apple's Music app.
+  assert.deepEqual(instantRoute("Open Yandex Music.", ctx())?.args, { url: "music.yandex.com" });
+  assert.deepEqual(instantRoute("go to the github website", ctx())?.args, { url: "github.com" });
+  assert.deepEqual(instantRoute("visit soundcloud", ctx())?.args, { url: "soundcloud.com" });
+  assert.equal(instantRoute("open telegram", ctx())?.action, "open_app", "an installed app wins");
+  assert.equal(instantRoute("open maps", ctx())?.action, "open_app", "so does the Maps app");
+  assert.equal(instantRoute("open apple music", ctx()), null, "Apple Music is the Music app, not a site");
+  assert.equal(instantRoute("open the yandex music app", ctx()), null, "asked for as an app: Jev decides");
+});
+
 test("anything inexact, unknown or destructive still goes to Jev", () => {
   for (const said of [
     "open the browser", // a description, not a name

@@ -41,7 +41,7 @@ const HINTS: Record<string, string> = {
   calendar: "Calendar, events and meetings.",
   mail: "Email.",
   messages: "Text messages: iMessage and SMS.",
-  music: "Music player: songs, albums and playlists.",
+  music: "Apple Music, Apple's own music app: songs, albums and playlists. Not other music services.",
   podcasts: "Podcasts.",
   tv: "Films and TV shows.",
   photos: "The photo library: view and edit pictures.",

@@ -3,7 +3,7 @@ import { runLearned } from "../learning/run.ts";
 import type { PlatformAdapter } from "../platform/types.ts";
 import { expandApps, listNames, pickBrowser, withoutBrowser } from "./apps.ts";
 import { chooseTab, clickTarget, looksDestructive, resultNumber } from "./browsing.ts";
-import { afterPhrase, extractUrl, parseCount, parsePercent, planSearch, shortlistBy } from "./parse.ts";
+import { KNOWN_SITE_NAMES, afterPhrase, extractUrl, parseCount, parsePercent, planSearch, shortlistBy } from "./parse.ts";
 import { SETTINGS_HOME, SETTINGS_PANES, paneByLabel, shortlistPanes } from "./settings-panes.ts";
 import {
   type ActionContext,
@@ -727,7 +727,7 @@ export const ACTIONS = {
   // --- web ---------------------------------------------------------------
   open_url: action({
     describe:
-      "Open a website in the browser. Use for a spelled-out address AND for a well-known site named directly, such as YouTube, GitHub, Gmail or Reddit — those are websites, not installed applications. Also when the user names the browser to use, as in 'open YouTube in Chrome'.",
+      `Open a website in the browser. Use for a spelled-out address AND for a well-known site named directly — ${KNOWN_SITE_NAMES.join(", ")} — which are websites, not installed applications, even when an app's name is part of theirs. Also when the user names the browser to use, as in 'open YouTube in Chrome'.`,
     examples: ["go to github dot com", "open example.com", "open youtube", "visit reddit", "open youtube in chrome"],
     slots: { url: textSlot("The web address", extractUrl) },
     async run({ url }, os, ctx) {

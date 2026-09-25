@@ -106,3 +106,12 @@ test("playing a video means clicking one", () => {
   assert.equal(clickTarget("play the first video"), "first video");
   assert.equal(clickTarget("click on Wi-Fi."), "Wi-Fi");
 });
+
+test("what to click, without where it is or an article", () => {
+  // From real use: "click on a radio from the sidebar menu" looked for a
+  // button called "a radio from the sidebar menu".
+  assert.equal(clickTarget("click on a radio."), "radio");
+  assert.equal(clickTarget("click on a radio from the sidebar menu."), "radio");
+  assert.equal(clickTarget("click radio in the sidebar"), "radio");
+  assert.equal(clickTarget("play a video"), "a video", "still the first video");
+});

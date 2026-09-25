@@ -62,6 +62,37 @@ function enumSlotsOf(action: ActionKey): [string, EnumSlot][] {
 
 const hasAppSlot = (action: ActionKey) => enumSlotsOf(action).some(([, s]) => s.group === "app");
 
+const OBJECT_STOPWORDS = new Set(["the", "a", "an", "my", "please", "for", "me", "now", "app", "application"]);
+
+/**
+ * The words that name the thing: "open yandex music" → ["yandex", "music"],
+ * "quit the safari app" → ["safari"].
+ */
+export function objectWords(transcript: string): string[] {
+  return transcript
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:please\s+)?(?:open|launch|start|run|switch to|bring up|go to|quit|close|exit|hide|show|focus|activate)\s+/, "")
+    .split(" ")
+    .filter((w) => w && !OBJECT_STOPWORDS.has(w));
+}
+
+/**
+ * Did the words name this app, and nothing more? "open yandex music"
+ * contains "Music", but names Yandex Music: observed in real use, it opened
+ * Apple's Music at 0.99. Every word of the object must be in the name —
+ * or, squashed together, spell it ("vs code" for VSCode).
+ */
+export function namesExactly(transcript: string, app: string): boolean {
+  const said = objectWords(transcript);
+  if (said.length === 0) return false;
+  const name = new Set(app.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return said.every((w) => name.has(w)) || said.join("") === squash(app);
+}
+
 /**
  * Every app worth offering: running first, since they are the likeliest
  * referent, then installed ones in the order given (most recently used first).
@@ -134,7 +165,7 @@ export async function planSlots(ctx: ActionContext): Promise<SlotPlan> {
   const named = shortlistBy(ctx.transcript, appUniverse(ctx), 8);
   if (named.length > 0 || ranked.some(hasAppSlot)) {
     const only = named.length === 1 ? named[0]! : null;
-    if (only && fuzzyScore(ctx.transcript, only) >= 1 && !wantsAll(ctx.transcript)) {
+    if (only && fuzzyScore(ctx.transcript, only) >= 1 && namesExactly(ctx.transcript, only) && !wantsAll(ctx.transcript)) {
       // Said verbatim, and nothing else comes close: there is nothing to ask.
       // Asking anyway is what used to cost a whole second round trip.
       plan.resolved.set(APP_QUESTION, only);

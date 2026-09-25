@@ -180,3 +180,15 @@ test("a browser named outright is left alone", async () => {
   const read = readSlots("open_app", { [APP_QUESTION]: { choice: "Google Chrome", confidence: 0.9 } }, plan, c);
   assert.deepEqual(read.args, { app: "Google Chrome" });
 });
+
+test("an app counts as named only when the words name all of it", async () => {
+  // From real use: "open Yandex Music" opened Apple's Music, at 0.99 — the
+  // name "Music" was in the words, and taken for the whole of them.
+  const { namesExactly } = await import("../src/main/actions/slots.ts");
+  assert.equal(namesExactly("open yandex music", "Music"), false);
+  assert.equal(namesExactly("open music", "Music"), true);
+  assert.equal(namesExactly("open the music app please", "Music"), true);
+  assert.equal(namesExactly("open vs code", "VSCode"), true);
+  const plan = await planSlots(ctx("open yandex music", { installedApps: ["Music", "Safari"] }));
+  assert.ok(!plan.resolved.has(APP_QUESTION), "asked, not assumed");
+});

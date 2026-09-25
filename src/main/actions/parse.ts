@@ -129,7 +129,25 @@ const KNOWN_SITES: Record<string, string> = {
   twitch: "twitch.tv",
   spotify: "open.spotify.com",
   maps: "maps.google.com",
+  "yandex music": "music.yandex.com",
+  yandex: "yandex.com",
+  "youtube music": "music.youtube.com",
+  soundcloud: "soundcloud.com",
+  deezer: "deezer.com",
 };
+
+/**
+ * The sites known by name, for telling Jev which names are websites. Not "x"
+ * or "maps", which say too little alone. Not Apple Music either: on a Mac that
+ * is the Music app.
+ */
+export const KNOWN_SITE_NAMES: readonly string[] = Object.keys(KNOWN_SITES).filter((n) => n !== "x" && n !== "maps");
+
+/** The address of a site named and nothing else: "yandex music" → music.yandex.com. */
+export function siteNamed(words: string): string | null {
+  const key = words.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  return KNOWN_SITE_NAMES.includes(key) ? KNOWN_SITES[key]! : null;
+}
 
 /** A URL or bare domain mentioned in the transcript. */
 export function extractUrl(transcript: string): string | null {
