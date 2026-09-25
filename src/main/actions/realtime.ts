@@ -1,3 +1,4 @@
+import { parameterValue } from "../learning/lesson.ts";
 import { missingSlots } from "./execute.ts";
 import { rankActions } from "./rank.ts";
 import { ACTIONS, ACTION_KEYS, type ActionKey } from "./registry.ts";
@@ -186,8 +187,15 @@ export function instantRoute(transcript: string, ctx: ActionContext): RouteDecis
     if (app) return decision("open_app", { app });
   }
 
+  // A learned command, said the way it was taught: no round trip either.
+  for (const learned of ctx.learned ?? []) {
+    if (!learned.examples.some((e) => norm(e) === t)) continue;
+    if (learned.parameter && !parameterValue(learned, transcript)) continue;
+    return decision("run_learned", { command: learned.id });
+  }
+
   const key = examples().get(t);
-  if (!key) return null;
+  if (!key || key === "run_learned") return null;
   const { args, missing, enums } = resolveLocalSlots(key, transcript);
   if (missing.length > 0 || Object.keys(enums).length > 0) return null;
   return decision(key, args);

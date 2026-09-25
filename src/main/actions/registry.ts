@@ -1,3 +1,5 @@
+import { parameterValue } from "../learning/lesson.ts";
+import { runLearned } from "../learning/run.ts";
 import type { PlatformAdapter } from "../platform/types.ts";
 import { expandApps, listNames, pickBrowser, withoutBrowser } from "./apps.ts";
 import { chooseTab, clickTarget, looksDestructive, resultNumber } from "./browsing.ts";
@@ -5,6 +7,7 @@ import { afterPhrase, extractUrl, parseCount, parsePercent, planSearch, shortlis
 import { SETTINGS_HOME, SETTINGS_PANES, paneByLabel, shortlistPanes } from "./settings-panes.ts";
 import {
   type ActionContext,
+  type Slot,
   type Slots,
   action,
   enumSlot,
@@ -65,6 +68,25 @@ async function showPage(url: string, os: PlatformAdapter, ctx: ActionContext): P
   const tab = browser ? await os.browserTab(browser).catch(() => null) : null;
   await os.browse(url, browser, chooseTab(tab?.url ?? null, ctx.lastPage));
   return browser;
+}
+
+/**
+ * One step of a learned command that is a built-in command: its arguments,
+ * said as words, typed the way that command's slots take them.
+ */
+async function runStep(key: string, args: Record<string, string>, os: PlatformAdapter, ctx: ActionContext): Promise<void> {
+  const def = (ACTIONS as Record<string, (typeof ACTIONS)[ActionKey]>)[key];
+  if (!def || key === "run_learned") throw new Error(`There is no ${key} command`);
+  const apps = new Map([...ctx.runningApps, ...ctx.installedApps].map((a) => [a.toLowerCase(), a]));
+  const typed: Record<string, string | number> = {};
+  for (const [name, slot] of Object.entries(def.slots as Record<string, Slot>)) {
+    const value = args[name] ?? "";
+    if (slot.kind === "number") typed[name] = Number(value);
+    else if (slot.kind === "enum" && slot.group === "app") typed[name] = apps.get(value.toLowerCase()) ?? value;
+    else typed[name] = value;
+  }
+  const run = def.run as (a: Record<string, string | number>, os: PlatformAdapter, ctx: ActionContext) => Promise<unknown>;
+  await run(typed, os, ctx);
 }
 
 export const ACTIONS = {
@@ -693,7 +715,7 @@ export const ACTIONS = {
 
   new_window: action({
     describe:
-      "Create a new window, document or item in the application in front — its Command-N: a new note in Notes, a new message in Mail, a new document in an editor.",
+      "Press Command-N in the application in front: a new window in most apps, a new note in Notes, a new message in Mail, a new document in an editor. Not for a new folder, a new tab or a private window, which are done differently.",
     examples: ["new window", "open a new window", "create a new note", "new document"],
     slots: {},
     async run(_a, os) {
@@ -812,7 +834,7 @@ export const ACTIONS = {
   // --- settings ----------------------------------------------------------
   open_settings: action({
     describe:
-      "Open System Settings, or one page of it such as Wi-Fi, Bluetooth, Displays, Sound, Battery, Notifications, Privacy & Security or Keyboard. Only opens the page: turning Wi-Fi or Bluetooth on or off are commands of their own.",
+      "Open System Settings, or one page of it such as Wi-Fi, Bluetooth, Displays, Sound, Battery, Notifications, Privacy & Security, Wallpaper, Software Update or Keyboard. Also for changing a setting that has no command of its own — the wallpaper, checking for updates, the keyboard — by opening the page where that is done. Turning Wi-Fi or Bluetooth on or off are commands of their own.",
     examples: ["open bluetooth settings", "open wifi settings", "show display settings", "open sound preferences", "open settings"],
     slots: {
       pane: enumSlot(
@@ -833,6 +855,28 @@ export const ACTIONS = {
       if (!page) throw new Error(`There is no settings page called ${pane}`);
       await os.openSettingsPane(page.id);
       return { detail: `Opened ${page.label} settings`, app: "System Settings" };
+    },
+  }),
+
+  // --- learned -----------------------------------------------------------
+  run_learned: action({
+    describe:
+      "Run one of the commands the agent has learned. Never offered to Jev as such: each learned command is offered on its own.",
+    examples: ["run a learned command"],
+    slots: { command: textSlot("Which learned command", () => null) },
+    async run({ command }, os, ctx) {
+      const learned = ctx.learned?.find((c) => c.id === command);
+      if (!learned) throw new Error("I don't know that command any more");
+      const value = parameterValue(learned, ctx.transcript);
+      if (learned.parameter && !value) throw new Error(`Say the ${learned.parameter.name.replace(/_/g, " ")} too`);
+      await runLearned(learned, value, {
+        os,
+        runAction: (key, args) => runStep(key, args, os, ctx),
+        openUrl: async (url) => {
+          await showPage(url, os, ctx);
+        },
+      });
+      return { detail: learned.title };
     },
   }),
 
@@ -860,10 +904,26 @@ export const ACTIONS = {
 export type ActionKey = keyof typeof ACTIONS;
 export const ACTION_KEYS = Object.keys(ACTIONS) as ActionKey[];
 
-/** The `criteria` map handed to Jev's Choice question. */
-export function choiceCriteria(): Record<ActionKey, string> {
-  const out = {} as Record<ActionKey, string>;
-  for (const key of ACTION_KEYS) out[key] = ACTIONS[key].describe;
+/**
+ * What Jev picks when no command fits: the cue to learn one. Without it the
+ * Choice had to pick *something*, and an unknown request came back as the
+ * nearest command at low confidence — indistinguishable from a muddled one.
+ */
+export const UNKNOWN_TASK = "unknown_task";
+
+/** Each learned command's key in the Choice. */
+export const LEARNED_PREFIX = "learned:";
+
+/**
+ * The `criteria` map handed to Jev's Choice question: the built-in commands,
+ * each learned one by its own description, and "none of these".
+ */
+export function choiceCriteria(learned: { id: string; describe: string }[] = []): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of ACTION_KEYS) if (key !== "run_learned") out[key] = ACTIONS[key].describe;
+  for (const c of learned) out[`${LEARNED_PREFIX}${c.id}`] = c.describe;
+  out[UNKNOWN_TASK] =
+    "The user asked the computer to do something that none of the other commands does: a task the assistant has no command for yet.";
   return out;
 }
 

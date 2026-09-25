@@ -74,6 +74,38 @@
           </span>
         </label>
       </div>
+
+      <div class="card">
+        <label class="switch">
+          <input type="checkbox" id="learning" />
+          <span>
+            <b>Learn commands it doesn't have yet</b>
+            <small>When Jev has no command for what you asked, a language model designs one from JVA's own building blocks — its commands, web pages, keyboard shortcuts, menu items, clicks. You approve each one once; after that it's instant, and no model is asked again. It never writes scripts.</small>
+          </span>
+        </label>
+        <label class="field">
+          <span class="label">OpenRouter API key</span>
+          <div class="row">
+            <input type="password" id="openRouterKey" placeholder="sk-or-…" spellcheck="false" autocomplete="off" />
+            <button id="saveOpenRouterKey" class="btn primary">Save</button>
+          </div>
+          <span class="hint" id="openRouterHint">Stored in the macOS Keychain. It never reaches this window again.</span>
+        </label>
+        <div class="row gap">
+          <button id="testOpenRouterKey" class="btn">Test key</button>
+          <span id="openRouterStatus" class="status"></span>
+        </div>
+        <label class="field">
+          <span class="label">Teacher model</span>
+          <input type="text" id="learnModel" spellcheck="false" />
+          <span class="hint">An OpenRouter model id. <code>openai/gpt-6-luna</code> is fast, and a new command costs a fraction of a cent.</span>
+        </label>
+        <label class="field">
+          <span class="label">Knowledge base address <em>optional</em></span>
+          <input type="text" id="knowledgeBaseUrl" placeholder="https://…" spellcheck="false" />
+          <span class="hint">Each learned command is also sent here, as JSON. Every lesson is always kept on this Mac, in <code>knowledge-base.jsonl</code>.</span>
+        </label>
+      </div>
     </section>
 
     <!-- ── Permissions ────────────────────────────────────────── -->

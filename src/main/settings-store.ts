@@ -18,6 +18,10 @@ interface Persisted extends AppSettings {
   /** Plain-text fallback, used only when OS encryption is unavailable. */
   apiKeyPlain?: string;
   apiKeyTail?: string;
+  /** The OpenRouter key, kept exactly as the TypeSafe one is. */
+  openRouterKeyEnc?: string;
+  openRouterKeyPlain?: string;
+  openRouterKeyTail?: string;
 }
 
 let cache: Persisted | null = null;
@@ -53,7 +57,11 @@ function persist(next: Persisted): void {
 }
 
 export function getSettings(): AppSettings {
-  const { apiKeyEnc: _e, apiKeyPlain: _p, apiKeyTail: _t, ...rest } = load();
+  const {
+    apiKeyEnc: _e, apiKeyPlain: _p, apiKeyTail: _t,
+    openRouterKeyEnc: _oe, openRouterKeyPlain: _op, openRouterKeyTail: _ot,
+    ...rest
+  } = load();
   return rest;
 }
 
@@ -110,5 +118,53 @@ export function apiKeySummary(): { present: boolean; tail: string; encrypted: bo
     present,
     tail: s.apiKeyTail ?? (process.env.TYPESAFE_API_KEY ? "(env)" : ""),
     encrypted: Boolean(s.apiKeyEnc),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OpenRouter key — for learning new commands
+// ---------------------------------------------------------------------------
+
+export function setOpenRouterKey(key: string): void {
+  const trimmed = key.trim();
+  const current = load();
+  if (!trimmed) {
+    persist({ ...current, openRouterKeyEnc: undefined, openRouterKeyPlain: undefined, openRouterKeyTail: undefined });
+    return;
+  }
+  const tail = trimmed.slice(-4);
+  if (safeStorage.isEncryptionAvailable()) {
+    persist({
+      ...current,
+      openRouterKeyEnc: safeStorage.encryptString(trimmed).toString("base64"),
+      openRouterKeyPlain: undefined,
+      openRouterKeyTail: tail,
+    });
+  } else {
+    persist({ ...current, openRouterKeyEnc: undefined, openRouterKeyPlain: trimmed, openRouterKeyTail: tail });
+  }
+}
+
+/** Main-process only. Never expose this over IPC. */
+export function getOpenRouterKey(): string {
+  const s = load();
+  if (s.openRouterKeyEnc) {
+    try {
+      return safeStorage.decryptString(Buffer.from(s.openRouterKeyEnc, "base64"));
+    } catch {
+      return "";
+    }
+  }
+  if (s.openRouterKeyPlain) return s.openRouterKeyPlain;
+  return process.env.OPENROUTER_API_KEY?.trim() ?? "";
+}
+
+export function openRouterKeySummary(): { present: boolean; tail: string; encrypted: boolean } {
+  const s = load();
+  const present = Boolean(s.openRouterKeyEnc || s.openRouterKeyPlain || process.env.OPENROUTER_API_KEY);
+  return {
+    present,
+    tail: s.openRouterKeyTail ?? (process.env.OPENROUTER_API_KEY ? "(env)" : ""),
+    encrypted: Boolean(s.openRouterKeyEnc),
   };
 }

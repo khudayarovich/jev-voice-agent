@@ -31,7 +31,8 @@
     "tail": "tail -f \"$HOME/Library/Application Support/jev-voice-agent/jev.log\"",
     "calibrate": "node --experimental-strip-types scripts/calibrate.mjs",
     "bench": "node scripts/run-in-electron.mjs scripts/bench/main.ts",
-    "eval": "node scripts/run-in-electron.mjs scripts/eval/main.ts"
+    "eval": "node scripts/run-in-electron.mjs scripts/eval/main.ts",
+    "kb:export": "node scripts/kb-export.mjs"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "0.6.0",

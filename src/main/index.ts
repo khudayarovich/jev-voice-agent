@@ -11,10 +11,16 @@ import { coordinator } from "./coordinator.ts";
 import { getLogPath, initLog, log } from "./log.ts";
 import * as jev from "./jev/client.ts";
 import * as permissions from "./permissions/index.ts";
+import { summarize } from "./learning/lesson.ts";
+import { forget, learnedCommands, recordLesson } from "./learning/store.ts";
+import { probeTeacher } from "./learning/teacher.ts";
 import {
   apiKeySummary,
+  getOpenRouterKey,
   getSettings,
+  openRouterKeySummary,
   setApiKey,
+  setOpenRouterKey,
   updateSettings,
 } from "./settings-store.ts";
 import { createTray, destroyTray, hideDock, refreshTrayMenu, setTrayState } from "./tray.ts";
@@ -154,6 +160,18 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.probeApiKey, () => jev.probe());
 
+  ipcMain.handle(IPC.getOpenRouterKeyInfo, () => openRouterKeySummary());
+  ipcMain.handle(IPC.setOpenRouterKey, (_e, key: string) => setOpenRouterKey(String(key ?? "")));
+  ipcMain.handle(IPC.probeOpenRouterKey, () => probeTeacher(getOpenRouterKey()));
+
+  ipcMain.handle(IPC.forgetLearned, async (_e, id: string) => {
+    const gone = forget(String(id));
+    if (!gone) return;
+    log("learn", "forgotten", { id: gone.id, title: gone.title });
+    const failed = await recordLesson("forgotten", gone, getSettings().knowledgeBaseUrl);
+    if (failed) log("learn", "knowledge-base-failed", { message: failed });
+  });
+
   ipcMain.handle(IPC.listPermissions, () => permissions.list());
   ipcMain.handle(IPC.requestPermission, (_e, id: PermissionId) => permissions.request(id));
   ipcMain.handle(IPC.openPermissionSettings, (_e, id: PermissionId) =>
@@ -199,17 +217,27 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.listActions, async () => {
-    const base = ACTION_KEYS.map((key) => ({
+    const base = ACTION_KEYS.filter((key) => key !== "run_learned").map((key) => ({
       key,
       describe: ACTIONS[key].describe,
       examples: ACTIONS[key].examples,
       destructive: ACTIONS[key].destructive === true,
       slots: Object.keys(ACTIONS[key].slots),
     }));
-    // The user's own Shortcuts are voice-callable too, so show them here rather
-    // than leaving the command list looking shorter than it is.
+    // Commands the agent learned, and the user's own Shortcuts, are
+    // voice-callable too: show them here rather than leaving the list looking
+    // shorter than it is.
+    const learned = learnedCommands().map((c) => ({
+      key: c.title,
+      describe: c.describe,
+      examples: c.examples,
+      destructive: c.confirm,
+      slots: c.parameter ? [c.parameter.name] : [],
+      learned: { id: c.id, steps: summarize(c), learnedAt: c.learnedAt, uses: c.uses },
+    }));
     const automations = await platform().listAutomations().catch(() => [] as string[]);
     return [
+      ...learned,
       ...base,
       ...automations.map((name) => ({
         key: `shortcut:${name}`,

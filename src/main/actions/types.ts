@@ -1,3 +1,4 @@
+import type { LearnedCommand } from "../learning/lesson.ts";
 import type { PlatformAdapter } from "../platform/types.ts";
 
 /**
@@ -37,6 +38,8 @@ export interface ActionContext {
    * still shows it, the next page may replace it rather than open a new tab.
    */
   lastPage?: string;
+  /** Commands the agent has learned, offered to Jev beside the built-in ones. */
+  learned?: LearnedCommand[];
 }
 
 /**

@@ -126,6 +126,8 @@ export interface PlatformAdapter {
   // --- on screen ---------------------------------------------------------
   /** Press a link or button in the window in front, found by its words or position. */
   click(target: ClickTarget): Promise<ClickResult>;
+  /** Choose a menu item of the app in front: ["File", "New Folder"], or three deep. */
+  chooseMenuItem(path: string[]): Promise<void>;
 
   // --- camera & settings -------------------------------------------------
   /** Take a picture with the built-in camera, the way the user would. */

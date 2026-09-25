@@ -667,6 +667,19 @@ end tell`;
     return { label: r.label ?? "", ...(r.url ? { url: r.url } : {}) };
   }
 
+  async chooseMenuItem(path: string[]): Promise<void> {
+    const [menu, second, third] = path;
+    if (!menu || !second) throw new Error("A menu item needs a menu and an item");
+    try {
+      if (third) await this.runMenuItem(menu, third, second);
+      else await this.runMenuItem(menu, second);
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      if (/-1728|can.t get menu/i.test(text)) throw new Error(`There is no ${path.join(" › ")} menu item here`);
+      throw translatePermissionError(err, "accessibility");
+    }
+  }
+
   // --- camera & settings -------------------------------------------------
 
   /**

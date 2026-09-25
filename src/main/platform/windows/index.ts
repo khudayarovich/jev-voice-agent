@@ -98,6 +98,7 @@ export class WindowsPlatform implements PlatformAdapter {
   revealInFiles(): Promise<void> { this.nope("Revealing files"); }
 
   click(): Promise<ClickResult> { this.nope("Clicking on screen"); }
+  chooseMenuItem(): Promise<void> { this.nope("Choosing menu items"); }
   takePhoto(): Promise<void> { this.nope("Taking photos"); }
   openSettingsPane(): Promise<void> { this.nope("Opening settings pages"); }
 }

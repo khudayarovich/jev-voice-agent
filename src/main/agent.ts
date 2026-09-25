@@ -29,11 +29,16 @@ import { WakeWord } from "./audio/wake.ts";
 import { WhisperEngine } from "./audio/whisper.ts";
 import { coordinator } from "./coordinator.ts";
 import { isSelfAudioActive, play } from "./earcons.ts";
+import { commandCatalog, lessonChecks } from "./learning/catalog.ts";
+import { type Checked, type LearnedCommand, checkLesson, summarize } from "./learning/lesson.ts";
+import { lessonMessages } from "./learning/prompt.ts";
+import { countUse, learnedCommands, recordLesson, remember as rememberLesson } from "./learning/store.ts";
+import { askTeacher } from "./learning/teacher.ts";
 import * as jev from "./jev/client.ts";
 import { type RouteDecision, route } from "./jev/router.ts";
 import { log as fileLog } from "./log.ts";
 import { platform } from "./platform/index.ts";
-import { getSettings } from "./settings-store.ts";
+import { getOpenRouterKey, getSettings } from "./settings-store.ts";
 import { broadcast, createCapture, getCapture, hideHud, showHud } from "./windows.ts";
 
 /**
@@ -303,11 +308,13 @@ function withMemory(e: Env): Env {
       ? lastBrowser.name
       : undefined;
   const page = lastPage && now - lastPage.at < RECENT_MS ? lastPage.url : undefined;
+  const learned = learnedCommands();
   return {
     ...e,
     ...(done.length ? { recent: done } : {}),
     ...(browser ? { lastBrowser: browser } : {}),
     ...(page ? { lastPage: page } : {}),
+    ...(learned.length ? { learned } : {}),
   };
 }
 
@@ -599,13 +606,17 @@ async function runEarly(
   });
 }
 
-/** A destructive action waiting for the user to say yes. */
+/** A destructive action — or a newly learned command — waiting for the user to say yes. */
 interface Pending {
   action: ActionKey;
   args: Record<string, string | number>;
   ctx: ActionContext;
   transcript: string;
   askedAt: number;
+  /** A command just designed, to keep if it works when tried. */
+  lesson?: LearnedCommand;
+  /** How long the question stands, when not the usual. */
+  windowMs?: number;
 }
 let pending: Pending | null = null;
 
@@ -748,6 +759,12 @@ async function runClauses(
       return;
     }
 
+    if (r.learn) {
+      // Nothing more of the chain: the lesson is a question of its own.
+      await learn(u, s, clauses[i]!, e);
+      return;
+    }
+
     if (r.clarify) {
       // Ask which one, and hold the conversation open for the answer.
       s.finished = true;
@@ -784,11 +801,17 @@ interface Outcome {
   confirm?: { action: ActionKey; args: Record<string, string | number> };
   /** Set when it is unclear which one the user meant: ask, with these options. */
   clarify?: { slot: string; options: string[] };
+  /** Set when there is no command for it, and one can be learned. */
+  learn?: boolean;
   execMs?: number;
 }
 
 function needsConfirmation(d: RouteDecision): boolean {
   if (!d.action || !getSettings().confirmDestructive) return false;
+  // A learned command asks when a step of it would, as its lesson recorded.
+  if (d.action === "run_learned") {
+    return learnedCommands().find((c) => c.id === d.args.command)?.confirm === true || d.risk >= 2.5;
+  }
   // Gated on BOTH the registry flag and the model's own read of how much damage
   // a misunderstanding would do — and, for a click, on what is being clicked.
   const def = ACTIONS[d.action] as { destructive?: boolean; confirmIf?: (args: Record<string, string | number>) => boolean };
@@ -812,6 +835,18 @@ async function act(
     return { outcome: "cancelled", action: null, detail: "not addressed to the agent", decision: d };
   }
   if (!d.action) {
+    // Jev has no command for it: learn one, when that is set up.
+    if (d.unknown) {
+      if (canLearn()) return { outcome: "rejected", action: null, detail: "Learning", decision: d, learn: true };
+      return {
+        outcome: "rejected",
+        action: null,
+        detail: getOpenRouterKey()
+          ? "I don't know how to do that yet"
+          : "I don't know how to do that yet — add an OpenRouter key in Settings and I'll learn it",
+        decision: d,
+      };
+    }
     return { outcome: "rejected", action: null, detail: sentence(d.reason) ?? "No matching command", decision: d };
   }
   const missing = missingSlots(d.action, d.args);
@@ -876,6 +911,7 @@ async function run(
     fileLog("execute", "ok", { action, args, execMs, ...(result.app ? { app: result.app } : {}) });
     worldVersion++;
     remember(action, args, result, ctx);
+    if (action === "run_learned" && learnedCommands().some((c) => c.id === args.command)) countUse(String(args.command));
     // A couple of actions steer the agent itself rather than the OS.
     if (action === "stop_listening") stopListening();
     // Another command follows: let the app just opened actually come to the
@@ -920,7 +956,7 @@ async function answerConfirmation(u: Utterance, s: Session): Promise<boolean> {
   const held = pending!;
   const generation = s.generation;
 
-  if (Date.now() - held.askedAt > CONFIRM_WINDOW_MS) {
+  if (Date.now() - held.askedAt > (held.windowMs ?? CONFIRM_WINDOW_MS)) {
     pending = null;
     // Too late to be an answer. A new command is still a command, though.
     if (readConfirmation(u.transcript) === "unclear" && rankActions(u.transcript, 1).length > 0) return false;
@@ -945,6 +981,10 @@ async function answerConfirmation(u: Utterance, s: Session): Promise<boolean> {
 
   if (answer === "yes") {
     const r = await serially(() => run(held.action, held.args, held.ctx, null, false));
+    if (held.lesson) {
+      keepLesson(u, s, held.lesson, r);
+      return true;
+    }
     const stops = held.action === "stop_listening" || held.action === "cancel";
     finish(u, s, r, { conversation: stops ? "close" : "open" });
     return true;
@@ -958,9 +998,11 @@ async function answerConfirmation(u: Utterance, s: Session): Promise<boolean> {
     return false;
   }
   // Anything else that is not a clear yes is a no: silence, a mumble.
+  if (held.lesson) fileLog("learn", "rejected", { id: held.lesson.id, said: u.transcript });
   finish(u, s, {
     outcome: "cancelled", action: held.action,
-    detail: answer === "no" ? "Cancelled" : "Not confirmed", decision: null,
+    detail: held.lesson ? "Okay — not learned" : answer === "no" ? "Cancelled" : "Not confirmed",
+    decision: null,
   });
   return true;
 }
@@ -1016,6 +1058,97 @@ async function answerClarification(u: Utterance, s: Session): Promise<boolean> {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Learning
+// ---------------------------------------------------------------------------
+
+/** A new command has more to take in than "Quit Safari?": longer to answer. */
+const LESSON_WINDOW_MS = 25_000;
+
+function canLearn(): boolean {
+  return getSettings().learning && getOpenRouterKey() !== "";
+}
+
+/**
+ * Jev has no command for what was asked: have the teacher design one, check
+ * it, and ask the user. It is tried and kept only on their yes (see
+ * keepLesson), and from then on Jev chooses it like any other command.
+ */
+async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<void> {
+  const settings = getSettings();
+  const ctx: ActionContext = { ...withMemory(e), transcript: clause };
+  s.finished = true;
+  coordinator.setState("thinking", "I don't know that one yet — learning it…");
+  showHud();
+  fileLog("learn", "asking", { request: clause, model: settings.learnModel });
+  const started = Date.now();
+
+  let checked: Checked;
+  try {
+    const [catalog, checks] = await Promise.all([
+      commandCatalog(ctx),
+      lessonChecks(ctx, learnedCommands().map((c) => c.id)),
+    ]);
+    const messages = lessonMessages({
+      request: clause,
+      catalog,
+      apps: checks.apps,
+      shortcuts: ctx.automations,
+      focusedApp: ctx.focusedApp,
+    });
+    const answer = await askTeacher(messages, { apiKey: getOpenRouterKey(), model: settings.learnModel });
+    checked = checkLesson(answer, checks, { request: clause, model: settings.learnModel });
+  } catch (err) {
+    fileLog("learn", "failed", { request: clause, message: describe(err), ms: Date.now() - started });
+    finish(u, s, { outcome: "failed", action: null, detail: `Couldn't learn that: ${describe(err)}`, decision: null });
+    return;
+  }
+
+  if (!checked.ok) {
+    fileLog("learn", "declined", { request: clause, reason: checked.reason, ms: Date.now() - started });
+    finish(u, s, { outcome: "rejected", action: null, detail: `I can't learn that — ${checked.reason}`, decision: null });
+    return;
+  }
+
+  const lesson = checked.command;
+  fileLog("learn", "proposed", {
+    request: clause, id: lesson.id, title: lesson.title, steps: lesson.steps,
+    confirm: lesson.confirm, ms: Date.now() - started,
+  });
+  clarifying = null;
+  pending = {
+    action: "run_learned",
+    args: { command: lesson.id },
+    ctx: { ...ctx, learned: [...(ctx.learned ?? []), lesson] },
+    transcript: clause,
+    askedAt: Date.now(),
+    lesson,
+    windowMs: LESSON_WINDOW_MS,
+  };
+  const question = `New command “${lesson.title}”: ${summarize(lesson)}. Say yes to try it and keep it.`;
+  coordinator.setState("confirming", question);
+  play("confirm");
+  showHud();
+  openConversation(LESSON_WINDOW_MS);
+}
+
+/** The user said yes and it was tried: keep it only if it worked. */
+function keepLesson(u: Utterance, s: Session, lesson: LearnedCommand, r: Outcome): void {
+  if (r.outcome !== "ok") {
+    fileLog("learn", "failed-trial", { id: lesson.id, detail: r.detail });
+    finish(u, s, { ...r, detail: `That didn't work, so I haven't kept it: ${r.detail}` });
+    return;
+  }
+  const kept = { ...lesson, uses: 1 };
+  rememberLesson(kept);
+  worldVersion++;
+  fileLog("learn", "learned", { id: kept.id, title: kept.title, examples: kept.examples });
+  void recordLesson("learned", kept, getSettings().knowledgeBaseUrl).then((failed) => {
+    if (failed) fileLog("learn", "knowledge-base-failed", { message: failed });
+  });
+  finish(u, s, { ...r, detail: `Learned “${kept.title}” — next time it's instant` });
+}
+
 /** What the agent asks before a destructive action, naming what it would do. */
 function confirmQuestion(action: ActionKey, args: Record<string, string | number>, ctx: ActionContext): string {
   const app = typeof args.app === "string" ? args.app : "";
@@ -1031,6 +1164,10 @@ function confirmQuestion(action: ActionKey, args: Record<string, string | number
       return "Turn off Wi-Fi? You'll be offline.";
     case "click_on":
       return `Click “${String(args.target ?? "")}”?`;
+    case "run_learned": {
+      const learned = (ctx.learned ?? learnedCommands()).find((c) => c.id === args.command);
+      return learned ? `Run “${learned.title}” — ${summarize(learned)}?` : "Run it?";
+    }
     default:
       return `${phrase(action)}${apps ? ` — ${apps}` : ""}?`;
   }

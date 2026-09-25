@@ -33,6 +33,13 @@ const api = {
     set: (key: string): Promise<void> => ipcRenderer.invoke(IPC.setApiKey, key),
     probe: (): Promise<ApiKeyStatus> => ipcRenderer.invoke(IPC.probeApiKey),
   },
+  /** The OpenRouter key, for learning: write-only, like the TypeSafe key. */
+  openRouter: {
+    info: (): Promise<{ present: boolean; tail: string; encrypted: boolean }> =>
+      ipcRenderer.invoke(IPC.getOpenRouterKeyInfo),
+    set: (key: string): Promise<void> => ipcRenderer.invoke(IPC.setOpenRouterKey, key),
+    probe: (): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke(IPC.probeOpenRouterKey),
+  },
   permissions: {
     list: (): Promise<PermissionInfo[]> => ipcRenderer.invoke(IPC.listPermissions),
     request: (id: PermissionId): Promise<PermissionState> =>
@@ -53,6 +60,7 @@ const api = {
   },
   actions: {
     list: (): Promise<ActionSummary[]> => ipcRenderer.invoke(IPC.listActions),
+    forget: (id: string): Promise<void> => ipcRenderer.invoke(IPC.forgetLearned, id),
   },
   agent: {
     state: (): Promise<{ state: AgentState; listening: boolean }> =>

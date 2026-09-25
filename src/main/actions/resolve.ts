@@ -24,6 +24,8 @@ export interface RouteDecision {
   offline: boolean;
   /** Decided on this Mac by an exact match, without asking Jev. */
   instant?: boolean;
+  /** Jev found no command for it: something the agent could learn. */
+  unknown?: boolean;
   /** Jev's confidence in the least certain slot it chose, e.g. which app. */
   slotConfidence?: number;
   /** Which slot that was, e.g. "app". */

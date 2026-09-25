@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readConfirmation } from "../src/main/actions/execute.ts";
-import { ACTIONS, ACTION_KEYS, choiceCriteria } from "../src/main/actions/registry.ts";
+import { ACTIONS, ACTION_KEYS, UNKNOWN_TASK, choiceCriteria } from "../src/main/actions/registry.ts";
 import { rankActions } from "../src/main/actions/rank.ts";
 
 // --- registry integrity ----------------------------------------------------
@@ -20,10 +20,14 @@ test("the registry fits inside a Jev Choice question", () => {
   assert.ok(ACTION_KEYS.length <= 255, `${ACTION_KEYS.length} actions exceeds the Choice limit`);
 });
 
-test("criteria keys match the registry keys exactly", () => {
+test("criteria keys are the registry's commands, the learned ones, and 'none of these'", () => {
   // This is the contract that makes the model's answer safe to dispatch on:
   // it can only ever return one of these keys.
-  assert.deepEqual(Object.keys(choiceCriteria()).sort(), [...ACTION_KEYS].sort());
+  const builtIn = ACTION_KEYS.filter((k) => k !== "run_learned");
+  assert.deepEqual(Object.keys(choiceCriteria()).sort(), [...builtIn, UNKNOWN_TASK].sort());
+  const withLearned = choiceCriteria([{ id: "new_folder", describe: "Make a new folder in Finder." }]);
+  assert.equal(withLearned["learned:new_folder"], "Make a new folder in Finder.");
+  assert.ok(!("run_learned" in withLearned), "learned commands are offered one by one, not as a group");
 });
 
 test("descriptions are distinct, so the model has something to separate them by", () => {

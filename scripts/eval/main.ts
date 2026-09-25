@@ -16,12 +16,16 @@
  */
 import { app } from "electron";
 import { SLOT_CONFIDENCE_MIN, instantRoute } from "../../src/main/actions/realtime.ts";
+import { commandCatalog, lessonChecks } from "../../src/main/learning/catalog.ts";
+import { checkLesson, summarize } from "../../src/main/learning/lesson.ts";
+import { lessonMessages } from "../../src/main/learning/prompt.ts";
+import { askTeacher } from "../../src/main/learning/teacher.ts";
 import { splitCommands } from "../../src/main/actions/split.ts";
 import type { ActionContext } from "../../src/main/actions/types.ts";
 import * as jev from "../../src/main/jev/client.ts";
 import { type RouteDecision, route } from "../../src/main/jev/router.ts";
 import { platform } from "../../src/main/platform/index.ts";
-import { getSettings } from "../../src/main/settings-store.ts";
+import { getOpenRouterKey, getSettings } from "../../src/main/settings-store.ts";
 
 const ROOT = process.env.JEV_ROOT ?? process.cwd();
 // Same name as the app, so the same settings file and Keychain entry.
@@ -117,6 +121,12 @@ const CASES: Case[] = [
   { say: "pause the music", expect: ["media_play_pause"] },
   { say: "resume the music", expect: ["media_play_pause"] },
   { say: "play", expect: ["media_play_pause"] },
+  // --- nothing fits: the cue to learn a new command ------------------------
+  { say: "create a new folder on the desktop", expect: ["unknown_task"] },
+  { say: "set a timer for five minutes", expect: ["unknown_task"] },
+  { say: "show hidden files in finder", expect: ["unknown_task"] },
+  { say: "open a private window in chrome", expect: ["unknown_task", "new_window"] },
+  { say: "search amazon for headphones", expect: ["web_search"] },
   // --- closing and quitting ------------------------------------------------
   { say: "close the browser.", expect: ["close_app_window"], target: "Google Chrome", env: IN_CHROME },
   { say: "close all browsers.", expect: ["quit_app", "close_app_window"], target: "Every open web browser", env: BROWSERS_OPEN },
@@ -177,11 +187,13 @@ async function main(): Promise<void> {
     // As the app does: a chain is split, and each clause decided on its own.
     const clauses = splitCommands(c.say);
     const decisions = await Promise.all(clauses.map(decideOne));
+    // "No command for that" is an answer too: the cue to learn one.
+    const named = (x: RouteDecision) => x.action ?? (x.unknown ? "unknown_task" : null);
     const d: RouteDecision = decisions.length === 1
-      ? decisions[0]!
+      ? { ...decisions[0]!, action: named(decisions[0]!) as RouteDecision["action"] }
       : {
           ...decisions.at(-1)!,
-          action: decisions.map((x) => x.action).join(" + ") as RouteDecision["action"],
+          action: decisions.map(named).join(" + ") as RouteDecision["action"],
           confidence: Math.min(...decisions.map((x) => x.confidence)),
         };
     const target = String(d.args.app ?? d.args.pane ?? d.args.url ?? d.args.target ?? d.args.query ?? "");
@@ -189,7 +201,7 @@ async function main(): Promise<void> {
     const targetOk =
       c.target === undefined || (typeof c.target === "string" ? target === c.target : c.target.test(target));
     const asks = d.slotConfidence !== undefined && d.slotConfidence < SLOT_CONFIDENCE_MIN;
-    const acts = d.confidence >= settings.confidenceThreshold && !d.reason && !asks;
+    const acts = d.confidence >= settings.confidenceThreshold && (!d.reason || d.unknown === true) && !asks;
     const ok = actionOk && targetOk && (acts || (asks && c.mayAsk === true));
     if (ok) right++;
     if (!d.instant) {
@@ -204,6 +216,34 @@ async function main(): Promise<void> {
         (d.reason ? `  — ${d.reason}` : "") +
         "\n",
     );
+  }
+
+  // --learn: what the teacher designs for each request Jev had no command for.
+  // Nothing is executed or kept.
+  if (process.argv.includes("--learn")) {
+    const key = getOpenRouterKey();
+    if (!key) {
+      process.stdout.write("\n--learn: no OpenRouter key in Settings; skipped\n");
+    } else {
+      process.stdout.write(`\nLessons from ${settings.learnModel}:\n`);
+      for (const c of cases.filter((x) => x.expect.includes("unknown_task"))) {
+        const ctx: ActionContext = { ...base, ...c.env, transcript: c.say };
+        const started = Date.now();
+        try {
+          const [catalog, checks] = await Promise.all([commandCatalog(ctx), lessonChecks(ctx, [])]);
+          const answer = await askTeacher(
+            lessonMessages({ request: c.say, catalog, apps: checks.apps, shortcuts: ctx.automations, focusedApp: ctx.focusedApp }),
+            { apiKey: key, model: settings.learnModel },
+          );
+          const r = checkLesson(answer, checks, { request: c.say, model: settings.learnModel });
+          process.stdout.write(
+            `  ${c.say.padEnd(38)} ${r.ok ? `"${r.command.title}": ${summarize(r.command)}${r.command.confirm ? "  [asks first]" : ""}` : `declined — ${r.reason}`}  (${Date.now() - started} ms)\n`,
+          );
+        } catch (err) {
+          process.stdout.write(`  ${c.say.padEnd(38)} failed — ${err instanceof Error ? err.message : String(err)}\n`);
+        }
+      }
+    }
   }
 
   const sorted = [...times].sort((a, b) => a - b);

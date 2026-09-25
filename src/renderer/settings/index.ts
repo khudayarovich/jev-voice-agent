@@ -95,6 +95,9 @@ async function hydrate(): Promise<void> {
   $<HTMLInputElement>("followUpSeconds").value = String(settings.followUpSeconds);
   $<HTMLInputElement>("realtime").checked = settings.realtime;
   $<HTMLInputElement>("instantCommands").checked = settings.instantCommands;
+  $<HTMLInputElement>("learning").checked = settings.learning;
+  $<HTMLInputElement>("learnModel").value = settings.learnModel;
+  $<HTMLInputElement>("knowledgeBaseUrl").value = settings.knowledgeBaseUrl;
 
   $<HTMLOutputElement>("wakeThresholdOut").textContent = pct(settings.wakeThreshold);
   $<HTMLOutputElement>("earconVolumeOut").textContent = pct(settings.earconVolume);
@@ -104,10 +107,10 @@ async function hydrate(): Promise<void> {
   hydrating = false;
 }
 
-for (const id of ["offlineFallback", "wakeWordEnabled", "earcons", "confirmDestructive", "launchAtLogin", "followUp", "listenOnStart", "realtime", "instantCommands"] as const) {
+for (const id of ["offlineFallback", "wakeWordEnabled", "earcons", "confirmDestructive", "launchAtLogin", "followUp", "listenOnStart", "realtime", "instantCommands", "learning"] as const) {
   bindCheckbox(id);
 }
-for (const id of ["model", "baseUrl", "hotkey"] as const) bindText(id);
+for (const id of ["model", "baseUrl", "hotkey", "learnModel", "knowledgeBaseUrl"] as const) bindText(id);
 
 bindRange("wakeThreshold", $<HTMLOutputElement>("wakeThresholdOut"), pct);
 bindRange("earconVolume", $<HTMLOutputElement>("earconVolumeOut"), pct);
@@ -157,6 +160,37 @@ async function testKey(): Promise<void> {
 }
 
 $("testKey").addEventListener("click", () => void testKey());
+
+// ---------------------------------------------------------------------------
+// OpenRouter key, for learning
+// ---------------------------------------------------------------------------
+
+async function refreshOpenRouterHint(): Promise<void> {
+  const info = await window.jev.openRouter.info();
+  $("openRouterHint").textContent = !info.present
+    ? "Stored in the macOS Keychain. It never reaches this window again."
+    : info.encrypted
+      ? `Saved (…${info.tail}), encrypted in the macOS Keychain.`
+      : `Saved (…${info.tail}). OS encryption was unavailable, so it is stored as plain text in your user data folder.`;
+}
+
+async function testOpenRouterKey(): Promise<void> {
+  const status = $("openRouterStatus");
+  status.className = "status";
+  status.textContent = "Checking…";
+  const r = await window.jev.openRouter.probe();
+  status.className = `status ${r.ok ? "ok" : "bad"}`;
+  status.textContent = r.message;
+}
+
+$("saveOpenRouterKey").addEventListener("click", async () => {
+  const input = $<HTMLInputElement>("openRouterKey");
+  await window.jev.openRouter.set(input.value);
+  input.value = "";
+  await refreshOpenRouterHint();
+  await testOpenRouterKey();
+});
+$("testOpenRouterKey").addEventListener("click", () => void testOpenRouterKey());
 
 // ---------------------------------------------------------------------------
 // Speech models
@@ -511,10 +545,26 @@ function commandCard(a: ActionSummary): HTMLElement {
     t.textContent = "your shortcut";
     head.append(t);
   }
+  if (a.learned) {
+    const t = document.createElement("span");
+    t.className = "tag learned";
+    t.textContent = "learned";
+    head.append(t);
+    const forget = document.createElement("button");
+    forget.className = "btn forget";
+    forget.textContent = "Forget";
+    forget.addEventListener("click", async () => {
+      forget.disabled = true;
+      await window.jev.actions.forget(a.learned!.id);
+      allActions = await window.jev.actions.list();
+      paintCommands($<HTMLInputElement>("commandFilter").value);
+    });
+    head.append(forget);
+  }
 
   const desc = document.createElement("p");
   desc.className = "cmd-desc";
-  desc.textContent = a.describe;
+  desc.textContent = a.learned ? `${a.describe} ${a.learned.steps}.` : a.describe;
 
   const ex = document.createElement("p");
   ex.className = "cmd-ex";
@@ -536,8 +586,10 @@ function paintCommands(filter: string): void {
     : allActions;
   $("commandList").replaceChildren(...shown.map(commandCard));
   const dynamic = allActions.filter((a) => a.dynamic).length;
+  const learned = allActions.filter((a) => a.learned).length;
   $("commandCount").textContent =
     `${shown.length} of ${allActions.length} commands` +
+    (learned ? ` · ${learned} learned` : "") +
     (dynamic ? ` · ${dynamic} from your own Shortcuts` : "");
 }
 
@@ -600,6 +652,7 @@ async function boot(): Promise<void> {
   if (requested) showTab(requested);
   await hydrate();
   await refreshKeyHint();
+  await refreshOpenRouterHint();
   const { state } = await window.jev.agent.state();
   paintState(state);
   await renderPermissions();

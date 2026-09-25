@@ -1,6 +1,14 @@
 import { choice, noul, score } from "@typesafe-ai/sdk";
 import { ALL_BROWSERS } from "../actions/apps.ts";
-import { ACTIONS, ACTION_KEYS, type ActionKey, choiceCriteria } from "../actions/registry.ts";
+import { parameterValue } from "../learning/lesson.ts";
+import {
+  ACTIONS,
+  ACTION_KEYS,
+  type ActionKey,
+  LEARNED_PREFIX,
+  UNKNOWN_TASK,
+  choiceCriteria,
+} from "../actions/registry.ts";
 import { rankActions } from "../actions/rank.ts";
 import { NONE, type RouteDecision, offlineRoute, resolveLocalSlots } from "../actions/resolve.ts";
 import { type SlotQuestion, appQuestion, planSlots, readSlots, slotCandidates } from "../actions/slots.ts";
@@ -96,7 +104,7 @@ export async function route(ctx: ActionContext, opts: RouteOptions): Promise<Rou
   const questions = {
     command: choice(
       "Which single command is the user asking the computer to perform?",
-      choiceCriteria(),
+      choiceCriteria(ctx.learned ?? []),
     ),
     addressed: noul(
       "The user is giving a command to their computer, rather than talking to another person or thinking out loud.",
@@ -116,13 +124,41 @@ export async function route(ctx: ActionContext, opts: RouteOptions): Promise<Rou
     );
 
     const answers = res.answers as Answers;
-    const picked = answers.command?.choice as ActionKey | undefined;
+    const choiceMade = answers.command?.choice;
+    const picked = choiceMade as ActionKey | undefined;
     const confidence = answers.command?.confidence ?? 0;
     const addressed = answers.addressed?.noul ?? 1;
     const risk = answers.risk?.score ?? 0;
     let inputTokens = res.usage.input_tokens;
+    const ms = () => Date.now() - started;
 
-    if (!picked || !ACTION_KEYS.includes(picked)) {
+    // Nothing fits: a task the agent could learn.
+    if (choiceMade === UNKNOWN_TASK) {
+      return {
+        action: null, args: {}, confidence, addressed, risk, offline: false,
+        ms: ms(), inputTokens, unknown: true, reason: "no command for that yet",
+      };
+    }
+
+    // One the agent learned earlier: no second opinion needed.
+    if (choiceMade?.startsWith(LEARNED_PREFIX)) {
+      const id = choiceMade.slice(LEARNED_PREFIX.length);
+      const learned = ctx.learned?.find((c) => c.id === id);
+      const missing = learned?.parameter && !parameterValue(learned, ctx.transcript);
+      const reason = !learned
+        ? "no matching command"
+        : missing
+          ? `could not work out the ${learned.parameter!.name.replace(/_/g, " ")}`
+          : confidence < opts.confidenceThreshold
+            ? "low confidence"
+            : undefined;
+      return {
+        action: learned ? "run_learned" : null, args: learned ? { command: id } : {}, confidence, addressed, risk,
+        offline: false, ms: ms(), inputTokens, ...(reason ? { reason } : {}),
+      };
+    }
+
+    if (!picked || !ACTION_KEYS.includes(picked) || picked === "run_learned") {
       return {
         action: null, args: {}, confidence, addressed, risk, offline: false,
         ms: Date.now() - started, inputTokens, reason: "no matching command",

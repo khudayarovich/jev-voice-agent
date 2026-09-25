@@ -164,6 +164,27 @@ isolated commands. What real use turned up, and what the agent does about it:
 - **Short-term memory.** Each request carries what the conversation just did, so
   *"close it"* has something to refer to.
 
+### It learns the commands it doesn't have
+
+When Jev has no command for a request, it says so — "none of these" is one of
+its choices — and, with an OpenRouter key in Settings, a language model (GPT-6
+Luna by default; a lesson costs a fraction of a cent) designs one:
+
+- **Only from JVA's own building blocks.** A lesson is a list of steps: one of
+  JVA's commands, a keyboard shortcut, a menu item, a web address, text to type,
+  a click on something on screen, a short wait. The model cannot write a script
+  or a shell command, and every step is checked against this Mac before you see it.
+- **You approve it once.** *"New command “New folder”: choose File › New Folder
+  in Finder. Say yes to try it and keep it."* It is kept only if it works, and
+  anything that deletes, sends or quits is marked to ask every time.
+- **Then it's instant.** Learned commands are offered to Jev beside the built-in
+  ones, and said the way they were taught they run with no network round trip
+  at all. Settings → Commands lists them, each with Forget.
+- **A knowledge base.** Every lesson is recorded in `knowledge-base.jsonl` on the
+  Mac, and sent to a web address of your choice if you set one; `npm run
+  kb:export` copies it into `knowledge/` to review — the record future built-in
+  commands are made from.
+
 Everything from the microphone to the transcript runs **on this machine**. Only
 the routing decision — a short transcript plus a small structured context
 object — is sent to Jev.
@@ -191,6 +212,7 @@ That is both why it is fast (70–500 ms, ~0.003¢ per command) and why it is sa
 - [x] **Realtime** — streaming transcription, acting at the pause, chains mid-sentence
 - [x] **Installable app** — a DMG with a self-contained speech engine; the model downloads on first run
 - [x] **Understanding** — apps described, one browser, sites and site searches, camera and settings pages, clarifying questions
+- [x] **Learning** — commands it has none for are designed by a language model from its own building blocks, approved once, then instant
 - [ ] **Phase 5** — wider registry, native helper for hold-to-talk
 - [ ] **Phase 6** — Apple SpeechAnalyzer engine, notarization
 
@@ -234,15 +256,15 @@ latency           mean 489ms   p50 410ms   p95 1222ms
 tokens            1901 per command
 ```
 
-`npm run eval` checks understanding on this Mac, with its real app list: 56
+`npm run eval` checks understanding on this Mac, with its real app list: 74
 requests that describe rather than name, involve browsers and clicking, chain
-two commands, or sit close to another command — including every one that went
-wrong in real use ("open selfie camera", "search for youtube.com", "close all
-browsers", "take a photo", "open YouTube" on a page of results). Nothing is
-executed:
+two commands, need a command it does not have yet, or sit close to another
+command — including every one that went wrong in real use ("open selfie
+camera", "search for youtube.com", "close all browsers", "take a photo", "click
+on Wi-Fi", "turn off Bluetooth"). Nothing is executed:
 
 ```
-56/56 right   routing p50 317 ms   p90 623 ms   3912 input tokens per request
+74/74 right   routing p50 331 ms   p90 521 ms   3861 input tokens per request
 ```
 
 Confidence is well separated: before the criteria were tightened, the two wrong
@@ -318,6 +340,8 @@ npm test            # hermetic tests, no microphone or network needed
 npm run typecheck
 npm run bench       # realtime latency through the real pipeline (needs the API key)
 npm run eval        # does it understand? real requests against this Mac's apps (needs the API key)
+npm run eval -- --learn   # …and what the teacher designs for the ones it has no command for
+npm run kb:export   # copy what it has learned into knowledge/
 npm run calibrate   # routing accuracy against the live API (TYPESAFE_API_KEY=...)
 npm run assets      # regenerate the tray icons and indicator tones
 npm run tail        # follow the structured log while you talk to it

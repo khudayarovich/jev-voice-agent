@@ -124,6 +124,16 @@ export interface AppSettings {
    * without asking Jev. Saves the network round trip on the commonest commands.
    */
   instantCommands: boolean;
+  /**
+   * When Jev has no command for a request, ask a language model on OpenRouter
+   * to design one from the agent's own building blocks, and remember it once
+   * the user agrees. Needs an OpenRouter key.
+   */
+  learning: boolean;
+  /** The OpenRouter model that designs new commands. */
+  learnModel: string;
+  /** Where to send each learned command as JSON, for a shared knowledge base. Empty: nowhere. */
+  knowledgeBaseUrl: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -147,6 +157,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sttModel: "small.en",
   realtime: true,
   instantCommands: true,
+  learning: true,
+  learnModel: "openai/gpt-6-luna",
+  knowledgeBaseUrl: "",
 };
 
 /** Result of probing the configured Jev credentials. */
@@ -204,6 +217,8 @@ export interface ActionSummary {
   slots: string[];
   /** True for actions discovered from the user's own Shortcuts. */
   dynamic?: boolean;
+  /** For a learned command: its id, what it does step by step, and when it was learned. */
+  learned?: { id: string; steps: string; learnedAt: string; uses: number };
 }
 
 /** One entry of the speech-to-text model catalogue, for the Settings picker. */
