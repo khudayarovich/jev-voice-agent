@@ -52,10 +52,10 @@ export async function resetGrantsIfUpdated(): Promise<boolean> {
   if (last === hash) return false;
   await writeFile(marker, JSON.stringify({ cdhash: hash, at: new Date().toISOString() })).catch(() => {});
 
-  // No marker: either a first install, with nothing granted yet, or a build
-  // from before markers existed — whose grants, if any show, are stale.
-  if (!last && !systemPreferences.isTrustedAccessibilityClient(false)) return false;
-
+  // No marker means a first install, where there is nothing to clear, or a
+  // build from before markers existed, whose grants are stale — and a stale
+  // grant reads as not granted, so it cannot be told from none. Clearing
+  // nothing costs nothing: clear either way.
   for (const service of SERVICES) {
     await exec("/usr/bin/tccutil", ["reset", service, APP_ID], { timeout: 5000 }).catch((err: Error) =>
       log("permissions", "reset-failed", { service, message: err.message }),
