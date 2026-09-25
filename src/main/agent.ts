@@ -81,7 +81,9 @@ async function doStart(): Promise<void> {
       speech = null;
     }
     await ensureModel(settings.sttModel);
-    if (!speech) speech = new WhisperEngine(settings.sttModel);
+    if (!speech) {
+      speech = new WhisperEngine(settings.sttModel, { trace: (event, data) => fileLog("whisper", event, data ?? {}) });
+    }
     // This also forces the one-time Metal shader compile, which takes ~17 s on a
     // cold machine. Far better to pay it here than on the first spoken command.
     await speech.start();

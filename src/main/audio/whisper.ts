@@ -1,9 +1,10 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { app } from "electron";
 import { DEFAULT_MODEL_ID, modelById } from "./models.ts";
+import { orphanedServers } from "./orphans.ts";
 import { SAMPLE_RATE, encodeWav } from "./wav.ts";
 
 /**
@@ -62,31 +63,22 @@ export function binaryPath(): string {
 }
 
 /**
- * Where the running child's PID is recorded.
- *
- * The child outlives the parent if Electron dies abnormally — a native abort in
- * an addon, say — leaving an orphaned server holding a port and ~150 MB. On the
- * next start we read this and clean up before spawning a new one.
+ * Kill servers left behind by a run that did not exit cleanly — and only
+ * those: see orphans.ts for why a server with a live parent is never touched.
  */
-function pidFile(): string {
-  return path.join(app.getPath("userData"), "whisper-server.pid");
-}
-
-/** Kill a server left behind by a previous run that did not exit cleanly. */
-function reapStale(): void {
-  const file = pidFile();
-  if (!existsSync(file)) return;
-  const pid = Number(readFileSync(file, "utf8").trim());
-  rmSync(file, { force: true });
-  if (!Number.isInteger(pid) || pid <= 1) return;
+function reapOrphans(): void {
+  let listing: string;
   try {
-    // Confirm it is actually ours before signalling: PIDs get reused.
-    const cmd = execFileSync("/bin/ps", ["-p", String(pid), "-o", "command="], {
-      encoding: "utf8",
-    });
-    if (cmd.includes("whisper-server")) process.kill(pid, "SIGTERM");
+    listing = execFileSync("/bin/ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8", timeout: 3000 });
   } catch {
-    // Already gone, which is the outcome we wanted anyway.
+    return;
+  }
+  for (const pid of orphanedServers(listing, modelsDir())) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Already gone, which is the outcome we wanted anyway.
+    }
   }
 }
 
@@ -134,19 +126,35 @@ async function freePort(): Promise<number> {
   });
 }
 
+/** More unexpected exits than this in a minute is a crash loop: stop restarting. */
+const MAX_RESTARTS_PER_MINUTE = 3;
+
+export interface WhisperOptions {
+  /** Lifecycle events worth a line in the log: the server died, came back. */
+  trace?: (event: string, data?: Record<string, unknown>) => void;
+}
+
 export class WhisperEngine implements SpeechEngine {
   private child: ChildProcess | null = null;
   private port = 0;
   private ready = false;
   private starting: Promise<void> | null = null;
+  /** True until started, and again once stopped on purpose. */
+  private stopped = true;
+  /** When the server last died without being asked to. */
+  private crashes: number[] = [];
+  /** Set from a crash until the server is back, whichever path restarts it. */
+  private crashedAt = 0;
   private vocabulary = "";
   private modelId: string;
   private latency: number;
+  private trace: NonNullable<WhisperOptions["trace"]>;
 
-  constructor(modelId: string = DEFAULT_MODEL_ID) {
+  constructor(modelId: string = DEFAULT_MODEL_ID, opts: WhisperOptions = {}) {
     this.modelId = modelId;
     // Seeded from the catalogue's measured figure until real ones arrive.
     this.latency = modelById(modelId).latencyMs;
+    this.trace = opts.trace ?? (() => {});
   }
 
   /** The model this engine was started with. */
@@ -167,6 +175,7 @@ export class WhisperEngine implements SpeechEngine {
   }
 
   async start(): Promise<void> {
+    this.stopped = false;
     if (this.ready) return;
     if (this.starting) return this.starting;
     this.starting = this.doStart().finally(() => {
@@ -189,7 +198,7 @@ export class WhisperEngine implements SpeechEngine {
       throw new Error("The speech model is not downloaded yet. Download it in Settings → Voice.");
     }
 
-    reapStale();
+    reapOrphans();
     this.port = await freePort();
     this.child = spawn(
       bin,
@@ -210,23 +219,25 @@ export class WhisperEngine implements SpeechEngine {
       { stdio: ["ignore", "pipe", "pipe"] },
     );
 
-    if (this.child.pid) writeFileSync(pidFile(), String(this.child.pid), "utf8");
-
     const child = this.child;
     live.add(child);
-    child.on("exit", () => {
+    child.on("exit", (code, signal) => {
       live.delete(child);
       // Only clear state that still belongs to this child: a model switch may
       // already have started its replacement.
       if (this.child !== child) return;
       this.ready = false;
       this.child = null;
-      rmSync(pidFile(), { force: true });
+      if (!this.stopped) this.recover(code, signal);
     });
 
     await this.waitForListening();
     this.ready = true;
     await this.warmup();
+    if (this.crashedAt) {
+      this.trace("server-restarted", { afterMs: Date.now() - this.crashedAt });
+      this.crashedAt = 0;
+    }
   }
 
   /** Poll the server until it answers, rather than guessing a sleep duration. */
@@ -254,7 +265,8 @@ export class WhisperEngine implements SpeechEngine {
     const silence = new Float32Array(SAMPLE_RATE); // 1 s
     const typical = this.latency;
     try {
-      await this.transcribe(silence);
+      // Straight to the server: transcribe() would wait for this very start.
+      await this.request(silence, {});
     } catch {
       // Warmup is best-effort; a failure here still leaves the server usable.
     }
@@ -263,9 +275,66 @@ export class WhisperEngine implements SpeechEngine {
     this.latency = typical;
   }
 
-  async transcribe(samples: Float32Array, opts: TranscribeOptions = {}): Promise<string> {
-    if (!this.ready || !this.port) throw new Error("speech engine not started");
+  /**
+   * The server died without being asked to — it crashed, or something killed
+   * it. Bring it back. Before this, one death left the app answering every
+   * command with "speech engine not started" until it was restarted by hand.
+   */
+  private recover(code: number | null, signal: NodeJS.Signals | null): void {
+    const now = Date.now();
+    this.crashes = [...this.crashes.filter((t) => now - t < 60_000), now];
+    if (this.crashes.length > MAX_RESTARTS_PER_MINUTE) {
+      // A crash loop: restarting again would only spin. The next command still
+      // tries once (see transcribe), so it can come back later on its own.
+      this.trace("server-crash-loop", { code, signal, crashes: this.crashes.length });
+      return;
+    }
+    this.trace("server-exited", { code, signal, restarting: true });
+    this.crashedAt = now;
+    setTimeout(() => {
+      if (this.stopped || this.ready) return;
+      this.start().catch((err: unknown) =>
+        this.trace("server-restart-failed", { message: err instanceof Error ? err.message : String(err) }),
+      );
+    }, 300).unref();
+  }
 
+  async transcribe(samples: Float32Array, opts: TranscribeOptions = {}): Promise<string> {
+    if (!this.ready || !this.port) {
+      if (this.stopped) throw new Error("speech engine not started");
+      // Coming back after the server died: wait for it rather than fail.
+      await this.start();
+      if (!this.ready || !this.port) throw new Error("speech engine not started");
+    }
+    try {
+      return await this.request(samples, opts);
+    } catch (err) {
+      // Refused because the server died a moment ago, before its exit had been
+      // noticed: wait for it to come back, then try once more.
+      if (opts.signal?.aborted || this.stopped || !(await this.died())) throw err;
+      await this.start();
+      return this.request(samples, opts);
+    }
+  }
+
+  /** Whether the server has died, allowing a moment for its exit to register. */
+  private died(withinMs = 500): Promise<boolean> {
+    const child = this.child;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const onExit = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        child.off("exit", onExit);
+        resolve(false);
+      }, withinMs);
+      child.once("exit", onExit);
+    });
+  }
+
+  private async request(samples: Float32Array, opts: TranscribeOptions): Promise<string> {
     const form = new FormData();
     // Copy into a plain Uint8Array: Node's Buffer is typed over ArrayBufferLike,
     // which Blob will not accept as a BlobPart.
@@ -291,6 +360,7 @@ export class WhisperEngine implements SpeechEngine {
   }
 
   stop(): void {
+    this.stopped = true;
     this.ready = false;
     const child = this.child;
     this.child = null;
@@ -303,7 +373,6 @@ export class WhisperEngine implements SpeechEngine {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       }, 2000).unref();
     }
-    rmSync(pidFile(), { force: true });
   }
 }
 
