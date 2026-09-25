@@ -122,7 +122,7 @@ const CASES: Case[] = [
   { say: "resume the music", expect: ["media_play_pause"] },
   { say: "play", expect: ["media_play_pause"] },
   // --- nothing fits: the cue to learn a new command ------------------------
-  { say: "create a new folder on the desktop", expect: ["unknown_task"] },
+  { say: "create a new folder on the desktop", expect: ["new_folder", "unknown_task"] },
   { say: "set a timer for five minutes", expect: ["unknown_task"] },
   { say: "show hidden files in finder", expect: ["unknown_task"] },
   { say: "open a private window in chrome", expect: ["unknown_task", "new_window"] },
@@ -134,6 +134,15 @@ const CASES: Case[] = [
   { say: "Play a radio.", expect: ["click_on", "unknown_task"], env: { focusedApp: "Music", windowTitle: "Music" } },
   { say: "Can you up the sound?", expect: ["volume_up"] },
   { say: "Click on the next song.", expect: ["media_next", "click_on"] },
+  // --- files ---------------------------------------------------------------
+  { say: "rename the folder on the desktop to Hello World.", expect: ["rename_item"] },
+  { say: "Rename the untitled folder on the desktop to a hello world.", expect: ["rename_item"] },
+  { say: "And the name the folder as hello.", expect: ["rename_item"] },
+  { say: "Create a new folder on the desktop.", expect: ["new_folder", "run_learned"] },
+  { say: "make a new folder called reports", expect: ["new_folder"] },
+  { say: "Open Downloads folder.", expect: ["open_folder", "run_learned"] },
+  { say: "Scroll at the bottom.", expect: ["scroll_to_bottom"] },
+  { say: "Have you created a new folder?", expect: ["explain_last"], env: { history: [{ said: "create a new folder", outcome: "ok", detail: "Made a folder “untitled folder”", at: Date.now() }] } },
   // --- the talk so far -----------------------------------------------------
   { say: "which permission do you need?", expect: ["explain_last"], env: { history: [{ said: "close notepad", outcome: "failed", detail: "Accessibility permission is needed to press keys and buttons. Grant it in Settings → Permissions.", at: Date.now() }] } },
   { say: "why did that not work", expect: ["explain_last"], env: { history: [{ said: "click hello", outcome: "failed", detail: "Couldn't find “Hello” in Safari.", at: Date.now() }] } },

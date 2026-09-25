@@ -21,7 +21,7 @@ import { ACTIONS } from "./registry.ts";
  * spaces around it, so "open Firefox and open YouTube" is genuinely two
  * commands. Including it blocked exactly that split.
  */
-export const TEXT_PAYLOAD = new Set<string>(["type_text", "web_search"]);
+export const TEXT_PAYLOAD = new Set<string>(["type_text", "web_search", "send_to_app"]);
 
 const SEPARATOR = /\s*(?:,\s*and\s+then|\s+and\s+then|\s+and\s+also|,\s*then|,\s*and|\s+then\b|\s+and\b)\s+/i;
 

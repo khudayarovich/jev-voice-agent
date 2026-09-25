@@ -80,7 +80,14 @@
           <input type="checkbox" id="learning" />
           <span>
             <b>Learn commands it doesn't have yet</b>
-            <small>When Jev has no command for what you asked, a language model designs one from JVA's own building blocks — its commands, web pages, keyboard shortcuts, menu items, clicks. You approve each one once; after that it's instant, and no model is asked again. It never writes scripts.</small>
+            <small>When Jev has no command for what you asked, a language model designs one from JVA's own building blocks — its commands, web pages, keyboard shortcuts, menu items, clicks. It is tried at once and kept if it works; after that it's instant, and no model is asked again. It never writes scripts.</small>
+          </span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="learnAsk" />
+          <span>
+            <b>Ask before trying a new command</b>
+            <small>Off: a new command that does nothing destructive is tried straight away. One that would quit, delete or send always asks first.</small>
           </span>
         </label>
         <label class="field">

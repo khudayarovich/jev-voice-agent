@@ -125,6 +125,19 @@ export interface PlatformAdapter {
   keystroke(combo: KeyCombo): Promise<void>;
   typeText(text: string): Promise<void>;
   scroll(direction: "up" | "down", amount: number): Promise<void>;
+  /** To the very top or bottom of what is in front. */
+  scrollToEnd(end: "top" | "bottom"): Promise<void>;
+
+  // --- files, through the file manager ---------------------------------
+  /** Show a folder in the file manager, by absolute path. */
+  openFolder(path: string): Promise<void>;
+  /** A new folder where the file manager is looking (its front window, else the desktop). Returns its name. */
+  newFolder(name: string | null): Promise<string>;
+  /**
+   * Rename an item where the file manager is looking: the one named, else
+   * the selected one, else the newest untitled folder. Returns the old name.
+   */
+  renameItem(item: string | null, to: string): Promise<string>;
 
   // --- web & files -------------------------------------------------------
   /**

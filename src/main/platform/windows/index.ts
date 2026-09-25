@@ -103,6 +103,10 @@ export class WindowsPlatform implements PlatformAdapter {
   keystroke(_combo: KeyCombo): Promise<void> { this.nope("Synthetic keystrokes"); }
   typeText(): Promise<void> { this.nope("Typing text"); }
   scroll(): Promise<void> { this.nope("Scrolling"); }
+  scrollToEnd(): Promise<void> { this.nope("Scrolling"); }
+  openFolder(): Promise<void> { this.nope("Opening folders"); }
+  newFolder(): Promise<string> { this.nope("Making folders"); }
+  renameItem(): Promise<string> { this.nope("Renaming"); }
 
   browse(): Promise<void> { this.nope("Opening URLs"); }
   browserTab(): Promise<BrowserTab | null> { return Promise.resolve(null); }

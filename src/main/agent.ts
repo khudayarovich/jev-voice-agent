@@ -30,7 +30,7 @@ import { WhisperEngine } from "./audio/whisper.ts";
 import { coordinator } from "./coordinator.ts";
 import { isSelfAudioActive, play } from "./earcons.ts";
 import { commandCatalog, lessonChecks } from "./learning/catalog.ts";
-import { type Checked, type LearnedCommand, checkLesson, summarize } from "./learning/lesson.ts";
+import { type Checked, type LearnedCommand, checkLesson, parameterValue, summarize } from "./learning/lesson.ts";
 import { lessonMessages } from "./learning/prompt.ts";
 import { countUse, learnedCommands, recordLesson, remember as rememberLesson } from "./learning/store.ts";
 import { askTeacher } from "./learning/teacher.ts";
@@ -1158,11 +1158,33 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
     request: clause, id: lesson.id, title: lesson.title, steps: lesson.steps,
     confirm: lesson.confirm, ms: Date.now() - started,
   });
+  const tryCtx = { ...ctx, learned: [...(ctx.learned ?? []), lesson] };
+
+  // A command that takes a value, asked for without one ("learn renaming
+  // folders"): nothing to try it on yet. Kept, with a word on how to say it.
+  if (lesson.parameter && !parameterValue(lesson, clause)) {
+    keepLesson(u, s, lesson, { outcome: "ok", action: "run_learned", detail: lesson.title, decision: null }, {
+      note: `say it with the ${lesson.parameter.name.replace(/_/g, " ")}, as in “${lesson.examples.find((e) => e.includes("{")) ?? lesson.parameter.leads[0] + " …"}”`,
+    });
+    return;
+  }
+
+  // Tried at once, unless it would do something worth asking about, or the
+  // user prefers to be asked. Kept only if it works.
+  if (!settings.learnAsk && !lesson.confirm) {
+    clarifying = null;
+    pending = null;
+    coordinator.setState("executing", `Trying “${lesson.title}”…`);
+    const r = await serially(() => run("run_learned", { command: lesson.id }, tryCtx, null, false));
+    keepLesson(u, s, lesson, r);
+    return;
+  }
+
   clarifying = null;
   pending = {
     action: "run_learned",
     args: { command: lesson.id },
-    ctx: { ...ctx, learned: [...(ctx.learned ?? []), lesson] },
+    ctx: tryCtx,
     transcript: clause,
     askedAt: Date.now(),
     lesson,
@@ -1178,7 +1200,7 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
 }
 
 /** The user said yes and it was tried: keep it only if it worked. */
-function keepLesson(u: Utterance, s: Session, lesson: LearnedCommand, r: Outcome): void {
+function keepLesson(u: Utterance, s: Session, lesson: LearnedCommand, r: Outcome, opts: { note?: string } = {}): void {
   if (r.outcome !== "ok") {
     fileLog("learn", "failed-trial", { id: lesson.id, detail: r.detail });
     finish(u, s, { ...r, detail: `That didn't work, so I haven't kept it: ${r.detail}` });
@@ -1192,7 +1214,7 @@ function keepLesson(u: Utterance, s: Session, lesson: LearnedCommand, r: Outcome
   void recordLesson("learned", kept, getSettings().knowledgeBaseUrl).then((failed) => {
     if (failed) fileLog("learn", "knowledge-base-failed", { message: failed });
   });
-  finish(u, s, { ...r, detail: `Learned “${kept.title}” — next time it's instant` });
+  finish(u, s, { ...r, detail: `Learned “${kept.title}” — ${opts.note ?? "next time it's instant"}` });
 }
 
 /** What the agent asks before a destructive action, naming what it would do. */

@@ -106,6 +106,7 @@ async function hydrate(): Promise<void> {
   $<HTMLInputElement>("realtime").checked = settings.realtime;
   $<HTMLInputElement>("instantCommands").checked = settings.instantCommands;
   $<HTMLInputElement>("learning").checked = settings.learning;
+  $<HTMLInputElement>("learnAsk").checked = settings.learnAsk;
   $<HTMLInputElement>("learnModel").value = settings.learnModel;
   $<HTMLInputElement>("knowledgeBaseUrl").value = settings.knowledgeBaseUrl;
 
@@ -117,7 +118,7 @@ async function hydrate(): Promise<void> {
   hydrating = false;
 }
 
-for (const id of ["offlineFallback", "wakeWordEnabled", "earcons", "confirmDestructive", "launchAtLogin", "followUp", "listenOnStart", "realtime", "instantCommands", "learning"] as const) {
+for (const id of ["offlineFallback", "wakeWordEnabled", "earcons", "confirmDestructive", "launchAtLogin", "followUp", "listenOnStart", "realtime", "instantCommands", "learning", "learnAsk"] as const) {
   bindCheckbox(id);
 }
 for (const id of ["model", "baseUrl", "hotkey", "learnModel", "knowledgeBaseUrl"] as const) bindText(id);

@@ -4,6 +4,8 @@ import type { NowPlaying, PlatformAdapter } from "../platform/types.ts";
 import { expandApps, listNames, pickBrowser, withoutBrowser } from "./apps.ts";
 import { chooseTab, clickTarget, looksDestructive, resultNumber } from "./browsing.ts";
 import { KNOWN_SITE_NAMES, afterPhrase, extractUrl, parseCount, parsePercent, planSearch, shortlistBy } from "./parse.ts";
+import { FOLDERS, newFolderName, renameRequest, shortlistFolders } from "./files.ts";
+import { messageRequest } from "./messages.ts";
 import { SETTINGS_HOME, SETTINGS_PANES, paneByLabel, shortlistPanes } from "./settings-panes.ts";
 import {
   type ActionContext,
@@ -581,6 +583,9 @@ export const ACTIONS = {
       "what happened",
       "what did you just do",
       "what do you need",
+      "did you do it",
+      "have you done it",
+      "did that work",
     ],
     slots: {},
     async run(_a, _os, ctx) {
@@ -732,6 +737,26 @@ export const ACTIONS = {
   }),
 
   // --- navigation --------------------------------------------------------
+  scroll_to_bottom: action({
+    describe: "Scroll all the way to the bottom of the page or window.",
+    examples: ["scroll to the bottom", "go to the bottom of the page", "scroll all the way down", "jump to the end"],
+    slots: {},
+    async run(_a, os) {
+      await os.scrollToEnd("bottom");
+      return { detail: "At the bottom" };
+    },
+  }),
+
+  scroll_to_top: action({
+    describe: "Scroll all the way to the top of the page or window.",
+    examples: ["scroll to the top", "go to the top of the page", "scroll all the way up", "back to the top"],
+    slots: {},
+    async run(_a, os) {
+      await os.scrollToEnd("top");
+      return { detail: "At the top" };
+    },
+  }),
+
   scroll_down: action({
     describe: "Scroll the current window down.",
     examples: ["scroll down", "page down", "go down"],
@@ -944,6 +969,68 @@ export const ACTIONS = {
       if (!page) throw new Error(`There is no settings page called ${pane}`);
       await os.openSettingsPane(page.id);
       return { detail: `Opened ${page.label} settings`, app: "System Settings" };
+    },
+  }),
+
+  // --- talking to apps ---------------------------------------------------
+  send_to_app: action({
+    describe:
+      "Type a message, prompt or question into an app and press Return to send it — an AI assistant such as Codex or ChatGPT, a chat app, a terminal: 'send a prompt to Codex saying …', 'ask ChatGPT …', 'tell Codex to …'. The app named, or else the one in front, as after 'open Codex'. Not for dictating text with no sending.",
+    examples: ["send a prompt to codex saying fix the tests", "ask chatgpt what is the capital of peru", "tell codex to run the build", "send a message to telegram saying hello"],
+    slots: {},
+    async run(_a, os, ctx) {
+      const { app, text } = messageRequest(ctx.transcript, [...ctx.runningApps, ...ctx.installedApps]);
+      if (!text) throw new Error("Say what to send: “send a prompt to Codex saying …”");
+      const target = app ?? ctx.focusedApp;
+      if (!target) throw new Error("Say which app to send it to");
+      await os.openApp(target);
+      if (!(await os.waitForFrontmost((a) => a === target, 4000))) throw new Error(`${target} did not come to the front`);
+      // A moment for its input field to take focus after coming forward.
+      await new Promise((r) => setTimeout(r, 500));
+      await os.typeText(text);
+      await new Promise((r) => setTimeout(r, 150));
+      await os.keystroke({ key: "return" });
+      return { detail: `Sent to ${target}: “${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`, app: target };
+    },
+  }),
+
+  // --- files -------------------------------------------------------------
+  open_folder: action({
+    describe:
+      "Open one of the user's folders in Finder: Desktop, Downloads, Documents, Pictures, Music, Movies, Applications or the home folder. Not for opening an app.",
+    examples: ["open the downloads folder", "open documents folder", "show my desktop folder", "go to the downloads folder", "open the applications folder"],
+    slots: {
+      folder: enumSlot("Which folder", () => Object.keys(FOLDERS), (ctx) => shortlistFolders(ctx.transcript)),
+    },
+    async run({ folder }, os) {
+      const where = FOLDERS[folder];
+      if (!where) throw new Error(`There is no folder called ${folder}`);
+      await os.openFolder(where);
+      return { detail: `Opened ${folder}`, app: "Finder" };
+    },
+  }),
+
+  new_folder: action({
+    describe:
+      "Make a new folder where Finder is looking — its front window, or the desktop — named as the user said, or untitled.",
+    examples: ["create a new folder", "make a new folder called reports", "new folder on the desktop", "create a folder named photos"],
+    slots: {},
+    async run(_a, os, ctx) {
+      const name = await os.newFolder(newFolderName(ctx.transcript));
+      return { detail: `Made a folder “${name}”`, app: "Finder" };
+    },
+  }),
+
+  rename_item: action({
+    describe:
+      "Rename a file or folder in Finder to a new name: the one the user names, or else the selected one. Use for 'rename', 'name it', 'call it'.",
+    examples: ["rename the folder to reports", "rename it to hello world", "rename untitled folder to photos", "name the new folder as notes", "call this folder archive"],
+    slots: {},
+    async run(_a, os, ctx) {
+      const { item, to } = renameRequest(ctx.transcript);
+      if (!to) throw new Error("Say the new name too: “rename it to …”");
+      const was = await os.renameItem(item, to);
+      return { detail: `Renamed “${was}” to “${to}”`, app: "Finder" };
     },
   }),
 

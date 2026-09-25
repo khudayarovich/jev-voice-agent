@@ -99,6 +99,13 @@ const MODIFIER_NAMES: Record<string, string> = {
   // error), and a key code such as F11's already names the key on that layer.
 };
 
+/** Where Finder is looking: its front window's folder, else the desktop. */
+const FINDER_HERE = `if (count of Finder windows) > 0 then
+    set here to target of front Finder window
+  else
+    set here to desktop
+  end if`;
+
 /** What a player is doing, in one round trip: "playing|Blue in Green". */
 const nowPlayingScript = (app: string) => `
 tell application ${asStr(app)}
@@ -603,6 +610,62 @@ return appName & "\\n" & winTitle`;
         }
       })();
     }, 700);
+  }
+
+  async scrollToEnd(end: "top" | "bottom"): Promise<void> {
+    await this.keystroke({ key: end === "top" ? "home" : "end" });
+  }
+
+  // --- files, through Finder ----------------------------------------------
+
+  async openFolder(folder: string): Promise<void> {
+    await exec("/usr/bin/open", [folder], { timeout: 6000 });
+  }
+
+  async newFolder(name: string | null): Promise<string> {
+    const props = name ? ` with properties {name:${asStr(name)}}` : "";
+    const out = await osa(
+      `tell application "Finder"
+  activate
+  ${FINDER_HERE}
+  set f to make new folder at here${props}
+  select f
+  return name of f
+end tell`,
+      { timeoutMs: 8000 },
+    );
+    return out.trim();
+  }
+
+  async renameItem(item: string | null, to: string): Promise<string> {
+    const find = item
+      ? `set matches to (items of here whose name is ${asStr(item)})
+  if (count of matches) is 0 then set matches to (items of here whose name is ${asStr(`${item} folder`)})
+  if (count of matches) is 0 then set matches to (items of here whose name contains ${asStr(item)})
+  if (count of matches) > 0 then set found to item 1 of matches`
+      : `set sel to selection
+  if (count of sel) > 0 then set found to item 1 of sel
+  if found is missing value then
+    set matches to (items of here whose name starts with "untitled folder")
+    if (count of matches) > 0 then set found to item 1 of matches
+  end if`;
+    const r = await runAppleScript(
+      `tell application "Finder"
+  ${FINDER_HERE}
+  set found to missing value
+  ${find}
+  if found is missing value then error "not found" number 9001
+  set was to name of found
+  set name of found to ${asStr(to)}
+  return was
+end tell`,
+      { timeoutMs: 8000 },
+    );
+    if (r.ok) return r.stdout.trim();
+    if (/9001/.test(r.stderr)) {
+      throw new Error(item ? `There is no “${item}” where Finder is looking` : "Select the file or folder to rename first");
+    }
+    throw new Error(r.stderr || `Could not rename to ${to}`);
   }
 
   async scroll(direction: "up" | "down", amount: number): Promise<void> {

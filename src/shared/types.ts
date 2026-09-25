@@ -132,6 +132,12 @@ export interface AppSettings {
   learning: boolean;
   /** The OpenRouter model that designs new commands. */
   learnModel: string;
+  /**
+   * Ask before a new command is tried. Off, a command that does nothing
+   * destructive is tried at once and kept if it works; one that would quit,
+   * delete or send still asks.
+   */
+  learnAsk: boolean;
   /** Where to send each learned command as JSON, for a shared knowledge base. Empty: nowhere. */
   knowledgeBaseUrl: string;
 }
@@ -159,6 +165,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   instantCommands: true,
   learning: true,
   learnModel: "openai/gpt-6-luna",
+  learnAsk: false,
   knowledgeBaseUrl: "",
 };
 

@@ -151,7 +151,7 @@ const OPEN_PANE =
 
 /** "which permission do you need?", "why didn't it work?", "what happened?". */
 const ABOUT_LAST =
-  /^(?:(?:so |and |hey )?(?:which|what)\s+permissions?\b|why (?:didnt|did not|dont|cant|couldnt|wont) (?:that|it|you)\b|what (?:went wrong|happened|was that|is wrong|do you need)\b)/;
+  /^(?:(?:so |and |hey )?(?:which|what)\s+permissions?\b|why (?:didnt|did not|dont|cant|couldnt|wont) (?:that|it|you)\b|what (?:went wrong|happened|was that|is wrong|do you need)\b|(?:have|did|had|havent|didnt|are|were) you\b)/;
 
 /** "open Yandex Music", "go to the GitHub website". */
 const OPEN_SITE = /^(?:please\s+)?(?:open|go to|visit|take me to)\s+(?:the\s+)?(.+?)(?:\s+website|\s+site)?(?:\s+please)?$/;
@@ -193,12 +193,11 @@ export function instantRoute(transcript: string, ctx: ActionContext): RouteDecis
   const t = norm(transcript).replace(/^please /, "").replace(/ please$/, "");
   if (!t) return null;
 
-  // A question about what just went wrong needs no model: the answer is in
-  // the memory of it. Observed in real use, "which permission do you need?"
-  // was not even taken as speech for the agent.
-  if (ABOUT_LAST.test(t) && ctx.history?.at(-1) && ctx.history.at(-1)!.outcome !== "ok") {
-    return decision("explain_last", {});
-  }
+  // A question about what just happened needs no model: the answer is in the
+  // memory of it. Observed in real use, "which permission do you need?" was
+  // not even taken as speech for the agent, and "have you created a new
+  // folder?" was taken as an order to create one.
+  if (ABOUT_LAST.test(t) && ctx.history?.length) return decision("explain_last", {});
 
   const opened = t.match(OPEN_APP)?.[1];
   if (opened) {

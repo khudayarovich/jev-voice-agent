@@ -170,7 +170,11 @@ test("a question about what just went wrong is answered from memory, with no mod
   for (const said of ["Which permission do you need?", "what permission you need", "why didn't that work", "What happened?"]) {
     assert.equal(instantRoute(said, failed)?.action, "explain_last", said);
   }
-  // With nothing gone wrong there is nothing to explain: the model reads it.
+  // "Have you…?" asks; it never orders. Observed: it made a second folder.
+  const made = ctx({ history: [{ said: "create a new folder", outcome: "ok", detail: "Made a folder “untitled folder”", at: Date.now() }] });
+  assert.equal(instantRoute("Have you created a new folder?", made)?.action, "explain_last");
+  assert.equal(instantRoute("did you do it", made)?.action, "explain_last");
+  // With nothing said before there is nothing to explain: the model reads it.
   assert.equal(instantRoute("what permission you need", ctx()), null);
 });
 
