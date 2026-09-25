@@ -176,3 +176,17 @@ test("without the wake word, speech must be clearly meant for the agent", async 
   assert.equal(actsEarly(d, "open settings", 0.55, ADDRESSED_MIN), true, "with the wake word: fine");
   assert.equal(actsEarly(d, "open settings", 0.55, FOLLOWUP_ADDRESSED_MIN), false, "without it: not enough");
 });
+
+test("a choice the words settle needs no network either", async () => {
+  // From real use: on a slow network, "open settings" failed with "Jev did not
+  // answer" — though the words alone say which settings.
+  const { instantRoute } = await import("../src/main/actions/realtime.ts");
+  const c = (t: string) => ({
+    transcript: t, focusedApp: "Finder", windowTitle: "", runningApps: ["Finder"],
+    installedApps: ["Safari"], automations: ["Morning Routine", "Backup"],
+  });
+  assert.deepEqual(instantRoute("open settings", c("open settings"))?.args, { pane: "System Settings" });
+  assert.deepEqual(instantRoute("open bluetooth settings", c("open bluetooth settings"))?.args, { pane: "Bluetooth" });
+  assert.deepEqual(instantRoute("snap this left", c("snap this left"))?.args, { side: "left" });
+  assert.equal(instantRoute("run my shortcut", c("run my shortcut")), null, "two Shortcuts: still a question");
+});

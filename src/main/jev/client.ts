@@ -26,10 +26,13 @@ let lastWarmAt = 0;
 
 /**
  * Per-attempt budget. The API answers in ~310 ms from here when the connection
- * is warm; anything past this is a network problem, and the offline matcher
- * should take over rather than leave the user waiting.
+ * is warm. It was 2.5 s, which a merely slow network overruns: measured in
+ * real use, connecting alone took up to 1.3 s, and every command failed with a
+ * red "Jev did not answer" while a correct answer was a second away. The
+ * commonest commands no longer ask Jev at all (see instantRoute), so waiting a
+ * little longer for the rest is the better failure.
  */
-const TIMEOUT_MS = 2500;
+const TIMEOUT_MS = 5000;
 
 /**
  * Retry only when a retry is quick.

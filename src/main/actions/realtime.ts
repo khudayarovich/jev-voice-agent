@@ -2,7 +2,7 @@ import { parameterValue } from "../learning/lesson.ts";
 import { missingSlots } from "./execute.ts";
 import { rankActions } from "./rank.ts";
 import { ACTIONS, ACTION_KEYS, type ActionKey } from "./registry.ts";
-import { type RouteDecision, resolveLocalSlots } from "./resolve.ts";
+import { type RouteDecision, certainChoice, resolveLocalSlots } from "./resolve.ts";
 import { TEXT_PAYLOAD, clausesOf } from "./split.ts";
 import type { ActionContext } from "./types.ts";
 
@@ -197,7 +197,14 @@ export function instantRoute(transcript: string, ctx: ActionContext): RouteDecis
   const key = examples().get(t);
   if (!key || key === "run_learned") return null;
   const { args, missing, enums } = resolveLocalSlots(key, transcript);
-  if (missing.length > 0 || Object.keys(enums).length > 0) return null;
+  if (missing.length > 0) return null;
+  // A choice the words settle by themselves — "open settings" is System
+  // Settings — needs no model either; any other choice does.
+  for (const [name, slot] of Object.entries(enums)) {
+    const certain = certainChoice(slot, ctx);
+    if (!certain) return null;
+    args[name] = certain;
+  }
   return decision(key, args);
 }
 

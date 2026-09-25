@@ -89,6 +89,11 @@ export function offlineRoute(ctx: ActionContext): RouteDecision {
 
   // Resolve enum slots by direct mention only — no guessing.
   for (const [name, slot] of Object.entries(enums)) {
+    const certain = certainChoice(slot, ctx);
+    if (certain) {
+      args[name] = certain;
+      continue;
+    }
     const all = slot.shortlist
       ? slot.shortlist(ctx, syncCandidates(slot, ctx))
       : syncCandidates(slot, ctx);
@@ -111,6 +116,17 @@ export function offlineRoute(ctx: ActionContext): RouteDecision {
     inputTokens: 0,
     ...(missing.length ? { reason: `could not work out the ${missing.join(", ")}` } : {}),
   };
+}
+
+/**
+ * The one value an enum slot's own shortlist leaves — "open settings" leaves
+ * System Settings, "snap this left" leaves left — when the words themselves
+ * decide it. Not for apps, whose shortlist is a fuzzy guess at a name.
+ */
+export function certainChoice(slot: EnumSlot, ctx: ActionContext): string | null {
+  if (slot.group === "app" || !slot.shortlist) return null;
+  const listed = slot.shortlist(ctx, syncCandidates(slot, ctx));
+  return listed.length === 1 ? listed[0]! : null;
 }
 
 /** Enum candidates that are already resolved, for the synchronous offline path. */
