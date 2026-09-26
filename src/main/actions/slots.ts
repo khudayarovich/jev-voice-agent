@@ -142,7 +142,13 @@ export async function planSlots(ctx: ActionContext): Promise<SlotPlan> {
   const named = shortlistBy(ctx.transcript, appUniverse(ctx), 8);
   if (named.length > 0 || ranked.some(hasAppSlot)) {
     const only = named.length === 1 ? named[0]! : null;
-    if (only && fuzzyScore(ctx.transcript, only) >= 1 && namesExactly(ctx.transcript, only) && !wantsAll(ctx.transcript)) {
+    const openBrowsers = ctx.runningApps.filter(isBrowser);
+    if (wantsAll(ctx.transcript) && openBrowsers.length > 1 && named.every(isBrowser)) {
+      // "All the browsers", with more than one open and none singled out:
+      // the group, and no question. Asked, the model took the one showing a
+      // page — observed once Safari had a window on screen.
+      plan.resolved.set(APP_QUESTION, ALL_BROWSERS);
+    } else if (only && fuzzyScore(ctx.transcript, only) >= 1 && namesExactly(ctx.transcript, only) && !wantsAll(ctx.transcript)) {
       // Said verbatim, and nothing else comes close: there is nothing to ask.
       // Asking anyway is what used to cost a whole second round trip.
       plan.resolved.set(APP_QUESTION, only);

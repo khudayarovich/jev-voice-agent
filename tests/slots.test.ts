@@ -122,9 +122,12 @@ test("browsers are told apart by which is default, open, or just used", async ()
 
 test("'all the browsers' is offered only when asked for, and when there are several", async () => {
   const two = { runningApps: ["Finder", "Safari", "Google Chrome"], installedApps: ["Safari", "Google Chrome"] };
-  const all = (await planSlots(ctx("close all browsers", two))).questions.get(APP_QUESTION);
-  assert.equal(all?.candidates[0], "Every open web browser");
-  assert.match(all?.notes?.["Every open web browser"] ?? "", /Safari and Google Chrome/);
+  // Asked for all of them, with two open: decided here, with no question.
+  const all = await planSlots(ctx("close all browsers", two));
+  assert.equal(all.resolved.get(APP_QUESTION), "Every open web browser");
+  // Asked for all with one open: the question, and the group is not in it.
+  const single = (await planSlots(ctx("close all browsers", { ...two, runningApps: ["Finder", "Safari"] }))).questions.get(APP_QUESTION);
+  assert.ok(!single?.candidates.includes("Every open web browser"));
 
   const one = (await planSlots(ctx("close the browser", two))).questions.get(APP_QUESTION);
   assert.ok(!one?.candidates.includes("Every open web browser"));
@@ -191,4 +194,16 @@ test("an app counts as named only when the words name all of it", async () => {
   assert.equal(namesExactly("open vs code", "VSCode"), true);
   const plan = await planSlots(ctx("open yandex music", { installedApps: ["Music", "Safari"] }));
   assert.ok(!plan.resolved.has(APP_QUESTION), "asked, not assumed");
+});
+
+test("'all the browsers' with more than one open is the group, and no question", async () => {
+  const { planSlots, APP_QUESTION } = await import("../src/main/actions/slots.ts");
+  const { ALL_BROWSERS } = await import("../src/main/actions/apps.ts");
+  const ctx = {
+    transcript: "close all browsers", focusedApp: "Finder", windowTitle: "",
+    runningApps: ["Finder", "Safari", "Google Chrome"], installedApps: ["Safari", "Google Chrome", "Firefox"], automations: [],
+  };
+  const plan = await planSlots(ctx);
+  assert.equal(plan.resolved.get(APP_QUESTION), ALL_BROWSERS);
+  assert.ok(!plan.questions.has(APP_QUESTION));
 });
