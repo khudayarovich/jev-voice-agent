@@ -6,6 +6,7 @@ import { chooseTab, clickTarget, looksDestructive, nearTarget, resultNumber } fr
 import { KNOWN_SITE_NAMES, afterPhrase, extractUrl, parseCount, parsePercent, planSearch, shortlistBy } from "./parse.ts";
 import { FOLDERS, newFolderName, renameRequest, shortlistFolders } from "./files.ts";
 import { messageRequest } from "./messages.ts";
+import { typeOrFail } from "./typing.ts";
 import { SETTINGS_HOME, SETTINGS_PANES, paneByLabel, shortlistPanes } from "./settings-panes.ts";
 import {
   type ActionContext,
@@ -105,24 +106,6 @@ export function explainLast(ctx: ActionContext): string {
   }
   if (last.outcome === "ok") return `I just did: ${last.detail}`;
   return `That didn't work: ${last.detail}`;
-}
-
-/**
- * Type into the front window's input and confirm the text is there: true
- * when it is, false when it plainly is not, null when that cannot be read.
- * A first miss gets one more try after the input is focused by force.
- */
-async function typeChecked(os: PlatformAdapter, text: string): Promise<boolean | null> {
-  const snippet = text.slice(0, 40).toLowerCase();
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await os.focusInput().catch(() => false);
-    await os.typeText(text);
-    await new Promise((r) => setTimeout(r, 300));
-    const value = await os.inputValue().catch(() => null);
-    if (typeof value !== "string") return null;
-    if (value.toLowerCase().includes(snippet)) return true;
-  }
-  return false;
 }
 
 /** The apps the user can see, the one in front first — and never this one. */
@@ -720,16 +703,20 @@ export const ACTIONS = {
   // --- dictation ---------------------------------------------------------
   type_text: action({
     describe:
-      "Type literal text into whatever is focused. Use when the user explicitly asked to type, write, or dictate something specific.",
+      "Type literal text into the focused text field, and nothing more — no Return, no sending. Use when the user asked to type, write or dictate specific words. If they also say to press enter, send or submit it, that is send_to_app.",
     examples: ["type hello world", "write dear sarah", "dictate this is a test"],
     slots: {
       text: textSlot("The exact words to type", (t) =>
-        afterPhrase(t, ["type out", "type", "write out", "write", "dictate", "insert"]),
+        afterPhrase(t, ["type out", "type", "write out", "write", "dictate", "insert"])?.replace(
+          /\s+(?:to|in|into|on)\s+(?:the\s+|its\s+)?(?:input|input field|chat|text field|prompt|box|field)(?:\s+field)?$/i,
+          "",
+        ) ?? null,
       ),
     },
-    async run({ text }, os) {
-      await os.typeText(text);
-      return { detail: `Typed "${text.slice(0, 48)}${text.length > 48 ? "…" : ""}"` };
+    async run({ text }, os, ctx) {
+      const landed = await typeOrFail(os, text, ctx.focusedApp || "the front window");
+      const shown = `"${text.slice(0, 48)}${text.length > 48 ? "…" : ""}"`;
+      return { detail: landed === "yes" ? `Typed ${shown}` : `Typed ${shown} — couldn't confirm it landed` };
     },
   }),
 
@@ -1011,8 +998,8 @@ export const ACTIONS = {
   // --- talking to apps ---------------------------------------------------
   send_to_app: action({
     describe:
-      "Type a message, prompt or question into an app and press Return to send it — an AI assistant such as Codex or ChatGPT, a chat app, a terminal: 'send a prompt to Codex saying …', 'ask ChatGPT …', 'tell Codex to …'. The app named, or else the one in front, as after 'open Codex'. Not for dictating text with no sending.",
-    examples: ["send a prompt to codex saying fix the tests", "ask chatgpt what is the capital of peru", "tell codex to run the build", "send a message to telegram saying hello"],
+      "Type a message, prompt or question into an app's input and press Return to send it — an AI assistant such as Codex or ChatGPT, a chat app, a terminal: 'send a prompt to Codex saying …', 'ask ChatGPT …', 'tell Codex to …', 'write hello in the input and press enter'. The app named, or else the one in front, as after 'open Codex'. Whenever the words say to send, submit, or press enter after typing.",
+    examples: ["send a prompt to codex saying fix the tests", "ask chatgpt what is the capital of peru", "tell codex to run the build", "send a message to telegram saying hello", "write hello to the input and press enter"],
     slots: {},
     async run(_a, os, ctx) {
       const { app, text } = messageRequest(ctx.transcript, [...ctx.runningApps, ...ctx.installedApps]);
@@ -1025,12 +1012,11 @@ export const ACTIONS = {
       // input, and the text is checked for before Return is pressed —
       // observed in real use, a prompt "sent" to OpenCode never appeared.
       await new Promise((r) => setTimeout(r, 400));
-      const landed = await typeChecked(os, text);
-      if (landed === false) throw new Error(`Couldn't get the text into ${target}'s input`);
+      const landed = await typeOrFail(os, text, target);
       await new Promise((r) => setTimeout(r, 150));
       await os.keystroke({ key: "return" });
       const shown = `“${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`;
-      return { detail: landed ? `Sent to ${target}: ${shown}` : `Typed ${shown} into ${target} and pressed Return — couldn't confirm it landed`, app: target };
+      return { detail: landed === "yes" ? `Sent to ${target}: ${shown}` : `Typed ${shown} into ${target} and pressed Return — couldn't confirm it landed`, app: target };
     },
   }),
 

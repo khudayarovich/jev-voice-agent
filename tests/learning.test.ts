@@ -251,7 +251,7 @@ test("runs each step through the agent's own machinery", async () => {
   );
   assert.deepEqual(ran, ["open_app:Finder", "https://example.com/?q=Invoices%202026"]);
   assert.deepEqual(
-    calls.filter((c) => c.method !== "waitForFrontmost" && c.method !== "frontApp").map((c) => c.method),
+    calls.filter((c) => !["waitForFrontmost", "frontApp", "focusInput", "inputValue"].includes(c.method)).map((c) => c.method),
     ["openApp", "keystroke", "typeText"],
   );
   assert.deepEqual(calls.find((c) => c.method === "typeText")?.args, ["Invoices 2026"]);

@@ -57,11 +57,17 @@ function clauseHead(transcript: string, k: number): string {
 
 /** Cut at the conjunctions, without judging whether the pieces are commands. */
 export function clausesOf(transcript: string): string[] {
-  return transcript
+  const parts = transcript
     .trim()
     .split(SEPARATOR)
     .map((p) => p.replace(/^[\s,.;]+|[\s,.;!?]+$/g, ""))
     .filter((p) => p.length > 1);
+  // "Open and open code app": a false start, said again in full — not a
+  // command of its own. Observed in real use.
+  return parts.filter((p, i) => {
+    const next = parts[i + 1];
+    return !(next && !p.includes(" ") && next.toLowerCase().startsWith(`${p.toLowerCase()} `));
+  });
 }
 
 /** "You are playing a video on YouTube": said for context, not as a command. */
@@ -81,7 +87,8 @@ export function splitCommands(transcript: string): string[] {
 
   const parts = clausesOf(whole);
 
-  if (parts.length < 2) return [whole];
+  // One clause left of several: a false start was dropped; the rest stands.
+  if (parts.length < 2) return parts.length === 1 && whole.split(SEPARATOR).length > 1 ? [parts[0]!] : [whole];
 
   const tops = parts.map((part) => rankActions(part, 1)[0]);
 

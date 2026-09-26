@@ -1,4 +1,5 @@
 import type { KeyCombo, PlatformAdapter } from "../platform/types.ts";
+import { typeOrFail } from "../actions/typing.ts";
 import { type LearnedCommand, type LearnedStep, isScriptRunner, withValue } from "./lesson.ts";
 
 /**
@@ -67,9 +68,13 @@ export async function runLearned(command: LearnedCommand, value: string | null, 
       case "open_url":
         await deps.openUrl(step.url);
         break;
-      case "type":
-        await os.typeText(step.text);
+      case "type": {
+        // Into the input, and checked: a lesson whose words land nowhere is
+        // not one that worked.
+        const front = await os.frontApp().catch(() => "");
+        await typeOrFail(os, step.text, front || "the front window");
         break;
+      }
       case "click":
         await os.click({ text: step.target });
         break;

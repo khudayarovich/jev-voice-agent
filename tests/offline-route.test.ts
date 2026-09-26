@@ -216,9 +216,11 @@ test("dictation types exactly what was said", async () => {
   assert.equal(d.action, "type_text");
   assert.equal(d.args.text, "Hello there, friend");
 
-  const { calls, os } = recorder();
+  const { calls, os } = recorder({ inputValue: "Hello there, friend" });
   await execute(d.action!, d.args, os, ctx(phrase));
-  assert.deepEqual(calls, [{ method: "typeText", args: ["Hello there, friend"] }]);
+  // Into the focused input, and read back: never typed into nothing.
+  assert.deepEqual(calls.map((c) => c.method), ["focusInput", "typeText", "inputValue"]);
+  assert.deepEqual(calls[1]?.args, ["Hello there, friend"]);
 });
 
 test("falls back to a slot default rather than failing", async () => {
@@ -384,4 +386,17 @@ test("a message to an app is typed into its focused input and checked before Ret
   const { calls: c2, os: os2 } = recorder({ waitForFrontmost: true, inputValue: "" });
   await assert.rejects(execute("send_to_app", {}, os2, ctx("tell codex to run the build", { installedApps: ["Codex"] })), /Couldn't get the text into Codex/);
   assert.ok(!c2.some((c) => c.method === "keystroke"));
+});
+
+test("dictation lands in the input or says so; it never reports words that went nowhere", async () => {
+  // From real use: "write hello to the input and click enter" pasted into
+  // nothing and was reported as typed.
+  const { calls, os } = recorder({ inputValue: "hello" });
+  const r = await execute("type_text", { text: "hello" }, os, ctx("type hello", { focusedApp: "OpenCode" }));
+  assert.equal(r.detail, 'Typed "hello"');
+  assert.deepEqual(calls.map((c) => c.method).slice(0, 3), ["focusInput", "typeText", "inputValue"]);
+  const { os: nowhere } = recorder({ inputValue: "" });
+  await assert.rejects(execute("type_text", { text: "hello" }, nowhere, ctx("type hello", { focusedApp: "OpenCode" })), /Couldn't get the text into OpenCode/);
+  const { os: blind } = recorder({ inputValue: null });
+  assert.match((await execute("type_text", { text: "hello" }, blind, ctx("type hello"))).detail ?? "", /couldn't confirm/);
 });

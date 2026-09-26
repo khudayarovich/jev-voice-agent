@@ -79,3 +79,7 @@ test("a statement said for context is not a command", () => {
   assert.deepEqual(splitCommands("You are playing a video on YouTube and make a pause for it"), ["make a pause for it"]);
   assert.deepEqual(splitCommands("it's too loud and turn the volume down"), ["turn the volume down"]);
 });
+
+test("a false start said again in full is not a command of its own", () => {
+  assert.deepEqual(splitCommands("Open and open code app"), ["open code app"]);
+});
