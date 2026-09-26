@@ -224,7 +224,18 @@ function siteSearch(site: string, query: string): SearchPlan | null {
  *   - everything else, a site's bare name included, is a web search. "Search
  *     for YouTube" is how people get to the results they then click on.
  */
-export function planSearch(transcript: string, query: string, windowTitle = ""): SearchPlan {
+/** The site a page belongs to, when it is one with a search of its own. */
+export function siteOfPage(url: string): string | null {
+  const host = url.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[/?#]/)[0] ?? "";
+  const known: [RegExp, string][] = [
+    [/(^|\.)youtube\.com$/, "youtube"], [/(^|\.)amazon\./, "amazon"], [/(^|\.)reddit\.com$/, "reddit"],
+    [/(^|\.)wikipedia\.org$/, "wikipedia"], [/(^|\.)github\.com$/, "github"], [/(^|\.)stackoverflow\.com$/, "stack overflow"],
+    [/(^|\.)open\.spotify\.com$/, "spotify"],
+  ];
+  return known.find(([re]) => re.test(host))?.[1] ?? null;
+}
+
+export function planSearch(transcript: string, query: string, windowTitle = "", lastPage = ""): SearchPlan {
   let q = query.trim().replace(/[.?!]+$/, "").replace(/^(the|a)\s+/i, "");
   const here = HERE.test(q);
   if (here) q = q.replace(HERE, "");
@@ -256,6 +267,12 @@ export function planSearch(transcript: string, query: string, windowTitle = ""):
     const there = site && siteSearch(site, q);
     if (there) return there;
   }
+
+  // "open YouTube and search for cats": the site this conversation just opened
+  // is where to search, not Google. Observed in real use.
+  const opened = lastPage ? siteOfPage(lastPage) : null;
+  const onOpened = opened && siteSearch(opened, q);
+  if (onOpened) return onOpened;
 
   return {
     url: `https://www.google.com/search?q=${encodeURIComponent(q)}`,

@@ -128,6 +128,18 @@ export function clickTarget(transcript: string): string | null {
 }
 
 /**
+ * "details of FASHUZ", "the play button on the third row": the control, and
+ * the words it sits beside. Null when the target names one thing only.
+ */
+export function nearTarget(target: string): { text: string; near: string } | null {
+  const m = target.match(/^(.+?)\s+(?:of|for|on|in|next to|beside|under|by|belonging to)\s+(?:the\s+)?(.+)$/i);
+  if (!m) return null;
+  const text = m[1]!.replace(/\s+(?:button|link|icon|option|row)$/i, "").trim();
+  const near = m[2]!.replace(/\s+(?:row|line|entry|item|network|wifi|wi fi)$/i, "").trim();
+  return text && near && text.split(" ").length <= 4 ? { text, near } : null;
+}
+
+/**
  * "the first result", "second link", "top one", "3rd video" → its position.
  * Null when the words name something rather than count it.
  */

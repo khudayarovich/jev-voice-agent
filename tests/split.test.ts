@@ -73,3 +73,9 @@ test("what to click keeps its 'and'", () => {
   assert.deepEqual(splitCommands("click terms and conditions"), ["click terms and conditions"]);
   assert.deepEqual(splitCommands("type hello and click send"), ["type hello and click send"], "dictation stays literal");
 });
+
+test("a statement said for context is not a command", () => {
+  // From real use: two pauses, which is none.
+  assert.deepEqual(splitCommands("You are playing a video on YouTube and make a pause for it"), ["make a pause for it"]);
+  assert.deepEqual(splitCommands("it's too loud and turn the volume down"), ["turn the volume down"]);
+});

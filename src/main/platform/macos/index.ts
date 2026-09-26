@@ -758,7 +758,9 @@ end tell`,
 
   async click(target: ClickTarget): Promise<ClickResult> {
     const helper = screenHelper();
-    const args = "nth" in target ? ["click", "--nth", String(target.nth)] : ["click", "--text", target.text];
+    const args = "nth" in target
+      ? ["click", "--nth", String(target.nth)]
+      : ["click", "--text", target.text, ...(target.near ? ["--near", target.near] : [])];
     let stdout: string;
     try {
       ({ stdout } = await exec(helper, args, { timeout: 8000 }));

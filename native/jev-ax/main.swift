@@ -2,6 +2,7 @@
 //
 //   jev-ax click --text "YouTube"   press the link or button whose words match best
 //   jev-ax click --nth 2            press the second search result on the page
+//   jev-ax click --text Details --near FASHUZ   the one beside those words: a row's own button
 //   jev-ax toggle --text Bluetooth --state off   set a switch or checkbox, and say what it is now
 //   jev-ax page                     the address of the page in front, if a browser
 //   jev-ax windows                  the windows showing on this desktop, and their apps
@@ -351,7 +352,27 @@ func results(on web: AXUIElement) -> [(link: AXUIElement, title: String)] {
   return outer.isEmpty ? inner : outer
 }
 
-func click(text wanted: String?, nth: Int?, dryRun: Bool) -> Never {
+/**
+ * Is the element beside these words — in a row, a card, a section that says
+ * them? "Details of FASHUZ" in the Wi‑Fi pane: every network has a Details
+ * button, and the words pick the row.
+ */
+func isNear(_ element: AXUIElement, words: String) -> Bool {
+  let asked = normalized(words).split(separator: " ").map(String.init)
+  guard !asked.isEmpty else { return true }
+  var node: AXUIElement? = element
+  for _ in 0..<8 {
+    guard let current = node else { break }
+    let around = normalized(label(current) + " " + textInside(current, depth: 3))
+    if asked.allSatisfy({ around.contains($0) }) { return true }
+    let r = role(current)
+    if r == "AXWindow" || r == "AXWebArea" { break }
+    node = parent(current)
+  }
+  return false
+}
+
+func click(text wanted: String?, nth: Int?, near: String?, dryRun: Bool) -> Never {
   let (app, window, appName) = focusedWindow()
   let web = page(in: window, app: app)
 
@@ -368,7 +389,9 @@ func click(text wanted: String?, nth: Int?, dryRun: Bool) -> Never {
   var best: (element: AXUIElement, label: String, score: Int)? = nil
   func consider(_ element: AXUIElement) {
     let l = label(element)
-    let s = score(label: l, link: url(element), wanted: wanted)
+    var s = score(label: l, link: url(element), wanted: wanted)
+    // Beside the words asked for: well ahead of the same control elsewhere.
+    if s > 0, let near = near { s = isNear(element, words: near) ? s + 200 : s }
     if s > 0, s > (best?.score ?? 0) { best = (element, l, s) }
   }
 
@@ -394,6 +417,9 @@ func click(text wanted: String?, nth: Int?, dryRun: Bool) -> Never {
   }
   guard let chosen = best else {
     fail("not-found", "Couldn't find \"\(wanted)\" in \(appName.isEmpty ? "the window in front" : appName).")
+  }
+  if let near = near, chosen.score < 200 {
+    fail("not-found", "Found \"\(wanted)\", but not one beside \"\(near)\".")
   }
   press(chosen.element, dryRun: dryRun, label: chosen.label)
 }
@@ -665,7 +691,7 @@ case "--version":
   emit(["ok": true, "version": version])
 case "click":
   let nth = option("--nth").flatMap { Int($0) }
-  click(text: option("--text"), nth: nth, dryRun: dryRun)
+  click(text: option("--text"), nth: nth, near: option("--near"), dryRun: dryRun)
 case "toggle":
   let state = option("--state")
   toggle(text: option("--text"), on: state == "on" ? true : state == "off" ? false : nil, dryRun: dryRun)

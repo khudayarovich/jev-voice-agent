@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  nearTarget,
   chooseTab,
   clickTarget,
   isBlankPage,
@@ -114,4 +115,12 @@ test("what to click, without where it is or an article", () => {
   assert.equal(clickTarget("click on a radio from the sidebar menu."), "radio");
   assert.equal(clickTarget("click radio in the sidebar"), "radio");
   assert.equal(clickTarget("play a video"), "a video", "still the first video");
+});
+
+test("a control beside some words: the control, and the words", () => {
+  // From real use, in the Wi‑Fi pane: every network has a Details button.
+  assert.deepEqual(nearTarget("details on FASHUZ wifi"), { text: "details", near: "FASHUZ" });
+  assert.deepEqual(nearTarget("the play button of the third row"), { text: "the play", near: "third" });
+  assert.equal(nearTarget("radio"), null);
+  assert.equal(nearTarget("a video about cats and dogs of the world with a very long name"), null);
 });

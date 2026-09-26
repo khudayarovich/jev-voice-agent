@@ -1,8 +1,8 @@
 import { parameterValue } from "../learning/lesson.ts";
 import { runLearned } from "../learning/run.ts";
-import type { NowPlaying, PlatformAdapter } from "../platform/types.ts";
-import { expandApps, listNames, pickBrowser, withoutBrowser } from "./apps.ts";
-import { chooseTab, clickTarget, looksDestructive, resultNumber } from "./browsing.ts";
+import type { ClickResult, NowPlaying, PlatformAdapter } from "../platform/types.ts";
+import { expandApps, isBrowser, listNames, pickBrowser, withoutBrowser } from "./apps.ts";
+import { chooseTab, clickTarget, looksDestructive, nearTarget, resultNumber } from "./browsing.ts";
 import { KNOWN_SITE_NAMES, afterPhrase, extractUrl, parseCount, parsePercent, planSearch, shortlistBy } from "./parse.ts";
 import { FOLDERS, newFolderName, renameRequest, shortlistFolders } from "./files.ts";
 import { messageRequest } from "./messages.ts";
@@ -548,7 +548,16 @@ export const ACTIONS = {
       "Play or pause the music or video that is already playing or paused, like the play/pause key. Not for choosing something new to watch: that is a click or a search.",
     examples: ["play", "pause", "pause the music", "resume"],
     slots: {},
-    async run(_a, os) {
+    async run(_a, os, ctx) {
+      // A video on YouTube in front: its own key, or the media key goes to
+      // whatever played last — observed in real use, it stopped Music.
+      if (isBrowser(ctx.focusedApp)) {
+        const tab = await os.browserTab(ctx.focusedApp).catch(() => null);
+        if (tab && /youtube\.com\/watch|youtube\.com\/shorts/i.test(tab.url)) {
+          await os.keystroke({ key: "k" });
+          return { detail: "Play/pause on YouTube" };
+        }
+      }
       const before = await os.nowPlaying().catch(() => null);
       await os.mediaPlayPause();
       return { detail: await mediaOutcome(os, before, "play/pause") };
@@ -887,7 +896,7 @@ export const ACTIONS = {
       ),
     },
     async run({ query }, os, ctx) {
-      const plan = planSearch(withoutBrowser(ctx.transcript) || query, query, ctx.windowTitle);
+      const plan = planSearch(withoutBrowser(ctx.transcript) || query, query, ctx.windowTitle, ctx.lastPage ?? "");
       const browser = await showPage(plan.url, os, ctx);
       const detail =
         plan.kind === "site"
@@ -914,7 +923,16 @@ export const ACTIONS = {
     confirmIf: ({ target }) => looksDestructive(target),
     async run({ target }, os) {
       const nth = resultNumber(target);
-      const r = await os.click(nth ? { nth } : { text: target });
+      let r: ClickResult;
+      try {
+        r = await os.click(nth ? { nth } : { text: target });
+      } catch (err) {
+        // "Details of FASHUZ": no control says all that; the row says the
+        // rest. Observed in real use, in the Wi‑Fi pane.
+        const beside = nth ? null : nearTarget(target);
+        if (!beside || !/Couldn't find/.test(String(err))) throw err;
+        r = await os.click({ text: beside.text, near: beside.near });
+      }
       // Not remembered as a page: a result's link is often a redirect, and
       // where it lands is the user's own reading, to be kept.
       return { detail: `Clicked ${r.label || target}` };

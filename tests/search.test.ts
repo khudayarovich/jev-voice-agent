@@ -61,3 +61,13 @@ test("everything else is a web search, with the words kept as said", () => {
   assert.equal(plan.query, "typescript generics");
   assert.equal(plan.label, "the web");
 });
+
+test("after opening a site, a plain search searches it", async () => {
+  const { planSearch, siteOfPage } = await import("../src/main/actions/parse.ts");
+  assert.equal(siteOfPage("https://www.youtube.com/"), "youtube");
+  assert.equal(siteOfPage("https://www.google.com/search?q=x"), null);
+  const p = planSearch("search the cat videos", "the cat videos", "", "https://www.youtube.com/");
+  assert.match(p.url, /youtube\.com\/results\?search_query=cat%20videos/);
+  const g = planSearch("search for cats", "cats", "", "https://www.google.com/");
+  assert.match(g.url, /google\.com\/search/);
+});

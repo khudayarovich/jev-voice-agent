@@ -28,7 +28,7 @@ export interface BrowserTab {
 }
 
 /** What to click: words on the thing, or the nth search result. */
-export type ClickTarget = { text: string } | { nth: number };
+export type ClickTarget = { text: string; near?: string } | { nth: number };
 
 /** What was clicked. */
 export interface ClickResult {

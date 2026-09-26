@@ -64,9 +64,20 @@ export function clausesOf(transcript: string): string[] {
     .filter((p) => p.length > 1);
 }
 
+/** "You are playing a video on YouTube": said for context, not as a command. */
+const STATEMENT = /^(?:you are|you're|youre|it is|it's|there is|there's|i am|i'm|this is|that is|we are|now you are)\b/i;
+
 export function splitCommands(transcript: string): string[] {
-  const whole = transcript.trim();
+  let whole = transcript.trim();
   if (!whole) return [];
+
+  // Observed in real use: "you are playing a video on YouTube and make a pause
+  // for it" became two pauses, which is none.
+  const said = clausesOf(whole);
+  if (said.length > 1 && said.some((p) => STATEMENT.test(p))) {
+    whole = said.filter((p) => !STATEMENT.test(p)).join(", ");
+    if (!whole) return [];
+  }
 
   const parts = clausesOf(whole);
 
