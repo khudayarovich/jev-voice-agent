@@ -179,6 +179,12 @@ test("a question about what just went wrong is answered from memory, with no mod
   assert.equal(instantRoute("what permission you need", ctx()), null);
 });
 
+test("'close <a running app>' closes its window, with no model", () => {
+  assert.deepEqual(instantRoute("Close Telegram.", ctx())?.args, { app: "Telegram" });
+  assert.equal(instantRoute("close telegram", ctx())?.action, "close_app_window");
+  assert.equal(instantRoute("close notes", ctx()), null, "not running: the model reads it");
+});
+
 test("anything inexact, unknown or destructive still goes to Jev", () => {
   for (const said of [
     "open the browser", // a description, not a name

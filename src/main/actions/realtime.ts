@@ -153,6 +153,9 @@ const OPEN_PANE =
 const ABOUT_LAST =
   /^(?:(?:so |and |hey )?(?:which|what)\s+permissions?\b|why (?:didnt|did not|dont|cant|couldnt|wont) (?:that|it|you)\b|what (?:went wrong|happened|was that|is wrong|do you need)\b|(?:have|did|had|havent|didnt|are|were) you\b)/;
 
+/** "close Telegram", "close the Calendar window". */
+const CLOSE_APP = /^(?:please\s+)?close\s+(?:the\s+)?(.+?)(?:\s+app|\s+window|\s+application)?(?:\s+please)?$/;
+
 /** "open Yandex Music", "go to the GitHub website". */
 const OPEN_SITE = /^(?:please\s+)?(?:open|go to|visit|take me to)\s+(?:the\s+)?(.+?)(?:\s+website|\s+site)?(?:\s+please)?$/;
 
@@ -204,6 +207,15 @@ export function instantRoute(transcript: string, ctx: ActionContext): RouteDecis
     const wanted = squash(opened);
     const app = [...ctx.runningApps, ...ctx.installedApps].find((a) => squash(a) === wanted);
     if (app) return decision("open_app", { app });
+  }
+
+  // "Close Telegram": its window, not the app — quitting is said as quit,
+  // and asks. Observed in real use at 54% and a five-second detour.
+  const closed = t.match(CLOSE_APP)?.[1];
+  if (closed) {
+    const wanted = squash(closed);
+    const app = ctx.runningApps.find((a) => squash(a) === wanted);
+    if (app) return decision("close_app_window", { app });
   }
 
   // A site known by name, with no app of exactly that name: a website, for

@@ -816,7 +816,7 @@ async function runClauses(
     // from the screen and the request, rather than given up on.
     if (canLearn() && worthWorkingOut(d, r)) {
       fileLog("agent", "working-out", { clause: clauses[i], action: d.action, outcome: r.outcome, detail: r.detail });
-      await learn(u, s, clauses[i]!, e, "failure");
+      await learn(u, s, clauses[i]!, e, "failure", d.action ? { action: d.action, detail: r.detail } : undefined);
       return;
     }
 
@@ -1168,7 +1168,14 @@ const MAX_ROUNDS = 4;
  * few rounds. A command that works anywhere is kept for next time; one made
  * for this screen is done once.
  */
-async function learn(u: Utterance, s: Session, clause: string, e: Env, origin: "unknown" | "failure" = "unknown"): Promise<void> {
+async function learn(
+  u: Utterance,
+  s: Session,
+  clause: string,
+  e: Env,
+  origin: "unknown" | "failure" = "unknown",
+  failed?: { action: string; detail: string },
+): Promise<void> {
   const settings = getSettings();
   s.finished = true;
   coordinator.setState("thinking", "Working it out…");
@@ -1249,6 +1256,13 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env, origin: "
       return;
     }
     const lesson = checked.command;
+    // The very command that just failed, proposed again as the whole plan:
+    // it would fail the same way. The first failure stands as the answer.
+    if (failed && lesson.steps.length === 1 && lesson.steps[0]!.do === "action" && lesson.steps[0]!.action === failed.action) {
+      fileLog("learn", "declined", { request: clause, reason: `the same ${failed.action} again`, ms: Date.now() - started });
+      finish(u, s, { outcome: "failed", action: null, detail: failed.detail, decision: null });
+      return;
+    }
     fileLog("learn", "proposed", {
       request: clause, round, id: lesson.id, title: lesson.title, steps: lesson.steps,
       confirm: lesson.confirm, done: verdict.done, ms: Date.now() - started,

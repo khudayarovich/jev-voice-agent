@@ -639,7 +639,9 @@ return appName & "\\n" & winTitle`;
 
   async inputValue(): Promise<string | null> {
     const { stdout } = await exec(screenHelper(), ["input", "--value"], { timeout: 3000 }).catch(() => ({ stdout: "" }));
-    const r = stdout ? (JSON.parse(stdout) as { ok: boolean; focused?: boolean; input?: boolean; value?: string }) : null;
+    const r = stdout ? (JSON.parse(stdout) as { ok: boolean; focused?: boolean; input?: boolean; secure?: boolean; value?: string }) : null;
+    // A password field cannot be read back: unknown, not empty.
+    if (r?.secure) return null;
     return r?.ok && r.focused && r.input ? (r.value ?? "") : null;
   }
 

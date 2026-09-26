@@ -451,3 +451,29 @@ test("'click X of <app>' brings that app forward and clicks there", async () => 
   await execute("click_on", { target: "18 in calendar" }, os2, ctx("click 18 in calendar", { focusedApp: "Calendar", runningApps: ["Finder", "Calendar"] }));
   assert.deepEqual(c2.map((c) => c.method), ["click"]);
 });
+
+test("a click not among the buttons finds the one item on screen with those words", async () => {
+  // From real use: "click on 18" in a month of Calendar.
+  const days = [17, 18, 19].map((d, k) => ({ i: 10 + k, role: "Cell", label: `Friday, ${d} September`, x: 0, y: 0, w: 1, h: 1 }));
+  const os = new Proxy({}, {
+    get: (_t, p: string) => p === "platform" ? "darwin" : (...a: unknown[]) => p === "click" ? Promise.reject(new Error("Couldn't find \"18\" in Calendar."))
+      : Promise.resolve(p === "screenElements" ? { app: "Calendar", elements: days } : p === "actOnElement" ? { label: a[2] } : undefined),
+  }) as unknown as PlatformAdapter;
+  const r = await execute("click_on", { target: "18" }, os, ctx("click on 18", { focusedApp: "Calendar" }));
+  assert.equal(r.detail, "Clicked Friday, 18 September");
+  // Several items say it: not a guess.
+  const os2 = new Proxy({}, {
+    get: (_t, p: string) => p === "platform" ? "darwin" : () => p === "click" ? Promise.reject(new Error("Couldn't find \"September\" in Calendar."))
+      : Promise.resolve(p === "screenElements" ? { app: "Calendar", elements: days } : undefined),
+  }) as unknown as PlatformAdapter;
+  await assert.rejects(execute("click_on", { target: "September" }, os2, ctx("click on september", { focusedApp: "Calendar" })), /Couldn't find/);
+});
+
+test("backspace takes a count, and a field can be cleared", async () => {
+  const { calls, os } = recorder();
+  await execute("press_delete", { times: 3 }, os, ctx("backspace three times"));
+  assert.equal(calls.filter((c) => c.method === "keystroke").length, 3);
+  const { calls: c2, os: os2 } = recorder();
+  await execute("clear_field", {}, os2, ctx("clear the input"));
+  assert.deepEqual(c2.map((c) => c.args[0]), [{ key: "a", modifiers: ["command"] }, { key: "delete" }]);
+});

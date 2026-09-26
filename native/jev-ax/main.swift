@@ -767,7 +767,10 @@ func inputValue() -> Never {
   let (app, _, _) = focusedWindow()
   guard let current = focusedElement(app) else { emit(["ok": true, "focused": false]) }
   let value = (attribute(current, kAXValueAttribute as String) as? String) ?? ""
-  emit(["ok": true, "focused": true, "role": role(current), "input": isTextInput(current), "value": String(value.suffix(400))])
+  // A password field shows only bullets: what was typed cannot be read back.
+  let secure = text(current, kAXSubroleAttribute as String) == "AXSecureTextField"
+    || (!value.isEmpty && value.allSatisfy { "•●*".contains($0) })
+  emit(["ok": true, "focused": true, "role": role(current), "input": isTextInput(current), "secure": secure, "value": String(value.suffix(400))])
 }
 
 /** Ask for Screen Recording: the prompt, and the app's row in System Settings. */

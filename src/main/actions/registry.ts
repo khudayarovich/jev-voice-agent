@@ -118,6 +118,21 @@ function appNamedIn(target: string, apps: string[]): { app: string; rest: string
   return app && m[1]!.trim() ? { app, rest: m[1]!.trim() } : null;
 }
 
+/**
+ * The one item on screen the words pick out, by the words on it — "18" among
+ * the days of a month — or null when none or several do. Cheap, and before
+ * any model: from real use, "click on 18" in Calendar waited seven seconds.
+ */
+async function onlyOnScreen(os: PlatformAdapter, target: string): Promise<{ i: number; role: string; label: string } | null> {
+  const shot = await os.screenElements().catch(() => null);
+  const wanted = target.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (!wanted) return null;
+  const words = (s: string) => ` ${s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
+  const hits = (shot?.elements ?? []).filter((e) => e.role !== "StaticText" && e.role !== "ScrollArea" && e.role !== "Heading" && words(e.label).includes(` ${wanted} `));
+  const labels = new Set(hits.map((h) => h.label));
+  return hits.length > 0 && labels.size === 1 ? hits[0]! : null;
+}
+
 /** The front window's own search: a field, or the button that opens one. */
 async function searchBoxOnScreen(os: PlatformAdapter): Promise<{ i: number; label: string; kind: "field" | "button" } | null> {
   const shot = await os.screenElements().catch(() => null);
@@ -762,12 +777,25 @@ export const ACTIONS = {
   }),
 
   press_delete: action({
-    describe: "Press the Delete key to remove the character or selection.",
-    examples: ["delete that", "backspace", "press delete"],
+    describe: "Press the Delete (backspace) key to remove the character before the cursor or the selection — once, or the number of times said.",
+    examples: ["delete that", "backspace", "press delete", "backspace ten times"],
+    slots: { times: numberSlot("How many times", (t) => parseCount(t, 1), 1) },
+    async run({ times }, os) {
+      const n = Math.max(1, Math.min(50, times));
+      for (let i = 0; i < n; i++) await os.keystroke({ key: "delete" });
+      return { detail: n === 1 ? "Delete" : `Delete ×${n}` };
+    },
+  }),
+
+  clear_field: action({
+    describe: "Clear the text field that has the focus: select everything in it and delete it. 'Clear the input', 'erase what I typed', 'delete everything in the field'.",
+    examples: ["clear the input", "clear the field", "erase what i typed", "delete everything in the input"],
     slots: {},
     async run(_a, os) {
+      await os.keystroke({ key: "a", modifiers: ["command"] });
+      await new Promise((r) => setTimeout(r, 80));
       await os.keystroke({ key: "delete" });
-      return { detail: "Delete" };
+      return { detail: "Cleared the field" };
     },
   }),
 
@@ -984,11 +1012,20 @@ export const ACTIONS = {
       try {
         r = await os.click(nth ? { nth } : { text: target });
       } catch (err) {
+        if (nth || !/Couldn't find/.test(String(err))) throw err;
         // "Details of FASHUZ": no control says all that; the row says the
         // rest. Observed in real use, in the Wi‑Fi pane.
-        const beside = nth ? null : nearTarget(target);
-        if (!beside || !/Couldn't find/.test(String(err))) throw err;
-        r = await os.click({ text: beside.text, near: beside.near });
+        const beside = nearTarget(target);
+        if (beside) {
+          r = await os.click({ text: beside.text, near: beside.near });
+        } else {
+          // Not among the buttons and links: perhaps a cell, a row, a day of
+          // a calendar. The screen list, when the words pick out one item.
+          const one = await onlyOnScreen(os, target);
+          if (!one) throw err;
+          const done = await os.actOnElement(one.i, one.role === "Row" || one.role === "Cell" ? "select" : "press", one.label);
+          r = { label: done.label };
+        }
       }
       // Not remembered as a page: a result's link is often a redirect, and
       // where it lands is the user's own reading, to be kept.
