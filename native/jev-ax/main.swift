@@ -32,6 +32,14 @@ import Foundation
 
 let version = "1"
 
+/**
+ * A budget for looking. Telegram's window took ten seconds to walk and the
+ * helper was killed before it could answer; better a quick "not found" than
+ * none. Set once the command is known.
+ */
+var deadline = Date().addingTimeInterval(3.0)
+func outOfTime() -> Bool { Date() > deadline }
+
 // MARK: - Output
 
 func emit(_ fields: [String: Any]) -> Never {
@@ -124,7 +132,7 @@ func webArea(in window: AXUIElement) -> AXUIElement? {
   var queue: [AXUIElement] = [window]
   var found: [AXUIElement] = []
   var visited = 0
-  while !queue.isEmpty, visited < 5000, found.count < 4 {
+  while !queue.isEmpty, visited < 5000, found.count < 4, !outOfTime() {
     let element = queue.removeFirst()
     visited += 1
     if role(element) == "AXWebArea" {
@@ -166,7 +174,7 @@ func pressables(in window: AXUIElement, budget: Int = 4000, intoWeb: Bool = fals
   var queue: [AXUIElement] = [window]
   var out: [AXUIElement] = []
   var visited = 0
-  while !queue.isEmpty, visited < budget {
+  while !queue.isEmpty, visited < budget, !outOfTime() {
     let element = queue.removeFirst()
     visited += 1
     let r = role(element)
@@ -175,6 +183,47 @@ func pressables(in window: AXUIElement, budget: Int = 4000, intoWeb: Bool = fals
     queue.append(contentsOf: children(element))
   }
   return out
+}
+
+/**
+ * Plain text that can be clicked where it is: a chat in Telegram's list is
+ * text in a list, with no button or row about it. A last resort, pressed by
+ * a click at its middle.
+ */
+func statics(in window: AXUIElement, budget: Int = 4000) -> [AXUIElement] {
+  var queue: [AXUIElement] = [window]
+  var out: [AXUIElement] = []
+  var visited = 0
+  while !queue.isEmpty, visited < budget, !outOfTime() {
+    let element = queue.removeFirst()
+    visited += 1
+    let r = role(element)
+    if r == "AXStaticText" {
+      let f = frame(of: element)
+      if f.width > 0, f.height > 0 { out.append(element) }
+      continue
+    }
+    if r == "AXWebArea" { continue }
+    queue.append(contentsOf: children(element))
+  }
+  return out
+}
+
+/** Whether the app can show a web page at all: a browser, or built on Chromium. */
+func showsWeb(_ app: AXUIElement) -> Bool {
+  var pid: pid_t = 0
+  AXUIElementGetPid(app, &pid)
+  guard let running = NSRunningApplication(processIdentifier: pid), let url = running.bundleURL else { return true }
+  let browsers: Set<String> = [
+    "com.apple.Safari", "com.google.Chrome", "com.google.Chrome.canary", "org.mozilla.firefox", "com.microsoft.edgemac",
+    "com.brave.Browser", "company.thebrowser.Browser", "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "org.chromium.Chromium",
+  ]
+  if let id = running.bundleIdentifier, browsers.contains(id) { return true }
+  let frameworks = url.appendingPathComponent("Contents/Frameworks")
+  for name in ["Electron Framework.framework", "Chromium Embedded Framework.framework"] {
+    if FileManager.default.fileExists(atPath: frameworks.appendingPathComponent(name).path) { return true }
+  }
+  return false
 }
 
 // MARK: - Matching
@@ -243,6 +292,9 @@ func focusedWindow() -> (app: AXUIElement, window: AXUIElement, name: String) {
  * page is not there on its own. Electron apps answer to AXManualAccessibility.
  */
 func page(in window: AXUIElement, app: AXUIElement) -> AXUIElement? {
+  // A native app has no page to wait for: Telegram cost two seconds of
+  // waiting, and a slower app for the asking.
+  if !showsWeb(app) { return nil }
   var found: AXUIElement? = nil
   for attempt in 0..<16 {
     if let web = webArea(in: window), !children(web).isEmpty {
@@ -416,6 +468,10 @@ func click(text wanted: String?, nth: Int?, near: String?, dryRun: Bool) -> Neve
   // the page search with nothing: walk their pages instead, which are small.
   if best == nil, web != nil {
     for element in pressables(in: window, budget: 6000, intoWeb: true) { consider(element) }
+  }
+  // Nothing pressable says it: text that does, clicked where it is.
+  if best == nil {
+    for element in statics(in: window) { consider(element) }
   }
   guard let chosen = best else {
     fail("not-found", "Couldn't find \"\(wanted)\" in \(appName.isEmpty ? "the window in front" : appName).")
@@ -614,7 +670,7 @@ func listed(in window: AXUIElement, app: AXUIElement) -> [Listed] {
   var queue: [AXUIElement] = [window]
   var out: [Listed] = []
   var visited = 0
-  while !queue.isEmpty, visited < 8000, out.count < MAX_LISTED {
+  while !queue.isEmpty, visited < 8000, out.count < MAX_LISTED, !outOfTime() {
     let element = queue.removeFirst()
     visited += 1
     let r = role(element)
@@ -857,6 +913,8 @@ func option(_ name: String) -> String? {
 }
 
 let targetPid: pid_t? = option("--pid").flatMap { pid_t($0) }
+
+deadline = Date().addingTimeInterval(args.first == "elements" || args.first == "act" ? 4.0 : 3.0)
 
 switch args.first {
 case "--version":

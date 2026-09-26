@@ -108,6 +108,15 @@ const FINDER_HERE = `if (count of Finder windows) > 0 then
     set here to desktop
   end if`;
 
+/** The helper's one line of JSON, or a plain failure when it gave none. */
+function parseHelper<T>(stdout: string, fallback: string): { ok: boolean; error?: string; message?: string } & T {
+  try {
+    return JSON.parse(stdout) as { ok: boolean; error?: string; message?: string } & T;
+  } catch {
+    return { ok: false, message: fallback } as { ok: boolean; error?: string; message?: string } & T;
+  }
+}
+
 /** What a player is doing, in one round trip: "playing|Blue in Green". */
 const nowPlayingScript = (app: string) => `
 tell application ${asStr(app)}
@@ -789,15 +798,14 @@ end tell`,
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw new Error(app.isPackaged ? "The clicking helper is missing. Reinstall JVA." : "Build the clicking helper first: npm run setup");
       }
-      throw err;
+      // Killed for taking too long, most likely: say that, not the command line.
+      throw new Error("Looking at the window in front took too long");
     }
-    const r = JSON.parse(stdout) as { ok: boolean; label?: string; url?: string; error?: string; message?: string };
-    if (!r.ok) {
-      if (r.error === "no-permission") {
-        throw new Error("Accessibility permission is needed to click things on screen. Grant it in Settings → Permissions.");
-      }
-      throw new Error(r.message ?? "Could not click that");
+    const r = parseHelper<{ label?: string; url?: string }>(stdout, "Could not click that");
+    if (r.error === "no-permission") {
+      throw new Error("Accessibility permission is needed to click things on screen. Grant it in Settings → Permissions.");
     }
+    if (!r.ok) throw new Error(r.message ?? "Could not click that");
     return { label: r.label ?? "", ...(r.url ? { url: r.url } : {}) };
   }
 
