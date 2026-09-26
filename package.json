@@ -28,7 +28,7 @@
     "start": "npm run build && electron .",
     "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
     "dist": "bash scripts/setup.sh --only portable,vad,kws,ax && npm run build && electron-builder --mac --arm64",
-    "dist:signed": "bash scripts/setup.sh --only portable,vad,kws,ax && npm run build && electron-builder --mac --arm64 --config.mac.identity=\"${JVA_SIGN_IDENTITY:?set JVA_SIGN_IDENTITY to the certificate's name}\"",
+    "dist:signed": "bash scripts/setup.sh --only portable,vad,kws,ax && npm run build && electron-builder --mac --arm64 --config.mac.identity=\"$JVA_SIGN_IDENTITY\"",
     "tail": "tail -f \"$HOME/Library/Application Support/jev-voice-agent/jev.log\"",
     "calibrate": "node --experimental-strip-types scripts/calibrate.mjs",
     "bench": "node scripts/run-in-electron.mjs scripts/bench/main.ts",
