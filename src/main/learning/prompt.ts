@@ -17,13 +17,15 @@ export interface LessonFacts {
   screen?: string[];
   /** In a later round: what has been done for this request so far, in order. */
   progress?: string[];
+  /** What was said and done just before, oldest first: "\"click on Fable 5.1\" → Clicked Model: Fable 5.1". */
+  conversation?: string[];
 }
 
 export const TEACHER_RULES = `You teach a Mac voice assistant a command it does not have yet.
 
 The user asked for something the assistant has no command for, or a command that could not do it. Work it out: design ONE command that does it, built only from the steps below, using what is on the screen when the request is about that. You cannot write code, scripts, shell commands or AppleScript. If the task needs those, or cannot be done with these steps, answer possible=false with a short reason addressed to the user, and command=null.
 
-The verdict: done=true when the task is complete once your steps have run (or needs no steps at all); done=false when you will need to see the screen again after these steps to go on — you will then be asked again, shown the new screen and what has been done. Keep a round's steps to what can be judged from this screen. For a question about what is on the screen ("which network am I on?", "what does it say?"), answer it in say, with done=true and command=null (possible=true). Otherwise say is null, or one short line of report.
+"Again", "it", "the same", "close it": read them against what was said and done just before, listed below. The verdict: done=true when the task is complete once your steps have run (or needs no steps at all); done=false when you will need to see the screen again after these steps to go on — you will then be asked again, shown the new screen and what has been done. Keep a round's steps to what can be judged from this screen. For a question about what is on the screen ("which network am I on?", "what does it say?"), answer it in say, with done=true and command=null (possible=true). Otherwise say is null, or one short line of report.
 
 Steps (every field of a step is present; those it does not use are null):
 - action: run one of the assistant's own commands, listed below, with each of its arguments as a {name, value} pair of strings. Prefer this whenever one fits.
@@ -57,6 +59,7 @@ export function lessonMessages(facts: LessonFacts): { role: "system" | "user"; c
     ...(facts.screen?.length
       ? ["", `On screen now, in ${facts.focusedApp || "the front window"} (index: kind "words" [= value] @x,y w×h):`, ...facts.screen]
       : []),
+    ...(facts.conversation?.length ? ["", "Said and done just before this request, oldest first:", ...facts.conversation.map((c) => `- ${c}`)] : []),
     ...(facts.progress?.length ? ["", "Done so far for this request, in order:", ...facts.progress.map((p) => `- ${p}`)] : []),
   ].join("\n");
   return [

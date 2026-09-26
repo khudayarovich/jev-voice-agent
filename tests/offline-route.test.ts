@@ -430,3 +430,12 @@ test("'search for <an app>' opens the app; a front app's own search box is used;
   await execute("web_search", { query: "invoices" }, os3, ctx("search the web for invoices", { focusedApp: "Finder" }));
   assert.ok(!c3.some((c) => c.method === "screenElements"), "asked for the web: no search box looked for");
 });
+
+test("'click again' clicks what was clicked last; with nothing before, it asks", async () => {
+  // From real use: "again" was looked for on the screen.
+  const { calls, os } = recorder();
+  const r = await execute("click_on", { target: "again" }, os, ctx("click again", { lastClicked: "Model: Fable 5.1" }));
+  assert.deepEqual(calls[0], { method: "click", args: [{ text: "Model: Fable 5.1" }] });
+  assert.match(r.detail ?? "", /^Clicked /);
+  await assert.rejects(execute("click_on", { target: "it" }, os, ctx("click it")), /Say what to click/);
+});

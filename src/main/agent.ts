@@ -285,6 +285,7 @@ function currentEnv(): Promise<Env> {
  * done, in the context each one is decided and run with.
  */
 const recent: { at: number; detail: string }[] = [];
+let lastClicked: { label: string; at: number } | null = null;
 
 /**
  * The talk so far: what was said and what came of it, failures included, and
@@ -316,6 +317,7 @@ function remember(action: ActionKey, args: Record<string, string | number>, resu
   while (recent.length > 4) recent.shift();
   if (result.app && isBrowser(result.app)) lastBrowser = { name: result.app, at: now };
   if (result.page) lastPage = { url: result.page, at: now };
+  if (action === "click_on" && result.detail?.startsWith("Clicked ")) lastClicked = { label: result.detail.slice(8), at: now };
   if (action === "quit_app" && lastBrowser && expandApps(String(args.app), e.runningApps).includes(lastBrowser.name)) {
     lastBrowser = null;
   }
@@ -336,6 +338,7 @@ function withMemory(e: Env): Env {
     ...e,
     ...(done.length ? { recent: done } : {}),
     ...(talk.length ? { history: talk } : {}),
+    ...(lastClicked && now - lastClicked.at < RECENT_MS ? { lastClicked: lastClicked.label } : {}),
     ...(browser ? { lastBrowser: browser } : {}),
     ...(page ? { lastPage: page } : {}),
     ...(learned.length ? { learned } : {}),
@@ -1190,6 +1193,7 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env, origin: "
         focusedApp: ctx.focusedApp,
         screen: lines,
         progress,
+        conversation: (ctx.history ?? []).slice(-4).map((h) => `"${h.said}" → ${h.outcome === "ok" ? "" : `${h.outcome}: `}${h.detail.slice(0, 100)}`),
       });
       answer = await askTeacher(messages, { apiKey: getOpenRouterKey(), model: settings.learnModel });
     } catch (err) {
@@ -1204,8 +1208,13 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env, origin: "
     // Nothing left to do: an answer read off the screen, or the task complete.
     if (verdict.steps === 0) {
       const possible = (answer as { possible?: unknown } | null)?.possible === true;
-      if (possible || verdict.done) {
-        finish(u, s, { outcome: "ok", action: null, detail: verdict.say ?? (progress.length ? progress.join(", ") : "Done"), decision: null });
+      // Nothing done and nothing to say is not "done": observed in real use,
+      // "click on model selection" was answered so with the screen untouched.
+      if ((possible || verdict.done) && (verdict.say || progress.length)) {
+        finish(u, s, { outcome: "ok", action: null, detail: verdict.say ?? progress.join(", "), decision: null });
+      } else if (possible || verdict.done) {
+        fileLog("learn", "declined", { request: clause, reason: "nothing to do", ms: Date.now() - started });
+        finish(u, s, { outcome: "rejected", action: null, detail: "I don't see a way to do that on this screen", decision: null });
       } else {
         const why = checkLesson(answer, checks, { request: clause, model: settings.learnModel });
         const reason = why.ok ? "It is not something I can do" : why.reason;

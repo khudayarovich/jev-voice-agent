@@ -951,7 +951,14 @@ export const ACTIONS = {
     ],
     slots: { target: textSlot("The words on the thing to click, or which result", clickTarget) },
     confirmIf: ({ target }) => looksDestructive(target),
-    async run({ target }, os) {
+    async run({ target: asked }, os, ctx) {
+      // "Click again", "click it", "the same one": the thing clicked last.
+      // Observed in real use: "again" was looked for on the screen.
+      let target = asked;
+      if (/^(?:again|it|that|this|the same(?: one| thing| button)?|same(?: one| button)?|once more|one more time|it again|that again)$/i.test(asked.trim())) {
+        if (!ctx.lastClicked) throw new Error("Say what to click — nothing was clicked just now");
+        target = ctx.lastClicked;
+      }
       const nth = resultNumber(target);
       let r: ClickResult;
       try {

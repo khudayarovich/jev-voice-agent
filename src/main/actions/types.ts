@@ -48,6 +48,8 @@ export interface ActionContext {
    * "grant it" as the follow-up it is.
    */
   history?: Exchange[];
+  /** The words on the thing clicked last, in this conversation: for "click it again". */
+  lastClicked?: string;
 }
 
 /** One thing the user said, and how it went. */
