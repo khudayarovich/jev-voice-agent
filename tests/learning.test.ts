@@ -332,3 +332,15 @@ test("an element step points into the screen as listed, and is never kept", asyn
   const risky = checkLesson({ ...answer, command: { ...answer.command, steps: [{ ...step, index: 2 }] } }, checks, { request: "x", model: "m" });
   assert.ok(risky.ok && risky.command.confirm);
 });
+
+test("a lesson that presses something says what it pressed, for 'click it again'", async () => {
+  const { runLearned } = await import("../src/main/learning/run.ts");
+  const calls: string[] = [];
+  const os = new Proxy({}, {
+    get: (_t, p: string) => p === "platform" ? "darwin" : (...a: unknown[]) => { calls.push(p); return Promise.resolve(p === "actOnElement" ? { label: "Model: Fable 5.1" } : p === "frontApp" ? "Claude" : undefined); },
+  }) as never;
+  const lesson = { id: "x", title: "x", describe: "", examples: [], parameter: null, confirm: false, learnedFrom: "", learnedAt: "", model: "", uses: 0,
+    steps: [{ do: "element" as const, index: 72, how: "press" as const, label: "Model: Fable 5.1" }] };
+  const did = await runLearned(lesson, null, { os, runAction: async () => {}, openUrl: async () => {} });
+  assert.deepEqual(did, { clicked: "Model: Fable 5.1" });
+});

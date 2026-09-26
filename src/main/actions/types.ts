@@ -124,6 +124,8 @@ export interface ActionResult {
   app?: string;
   /** The page it opened, for a browser action. Remembered, like `app`. */
   page?: string;
+  /** The words on what it clicked, whichever way: for "click it again". */
+  clicked?: string;
 }
 
 export interface ActionDef<S extends Slots = Slots> {

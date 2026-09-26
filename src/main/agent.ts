@@ -317,7 +317,7 @@ function remember(action: ActionKey, args: Record<string, string | number>, resu
   while (recent.length > 4) recent.shift();
   if (result.app && isBrowser(result.app)) lastBrowser = { name: result.app, at: now };
   if (result.page) lastPage = { url: result.page, at: now };
-  if (action === "click_on" && result.detail?.startsWith("Clicked ")) lastClicked = { label: result.detail.slice(8), at: now };
+  if (result.clicked) lastClicked = { label: result.clicked, at: now };
   if (action === "quit_app" && lastBrowser && expandApps(String(args.app), e.runningApps).includes(lastBrowser.name)) {
     lastBrowser = null;
   }

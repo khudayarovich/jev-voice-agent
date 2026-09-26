@@ -41,8 +41,9 @@ async function bringForward(app: string, os: PlatformAdapter): Promise<void> {
 const typesOrPresses = (s: LearnedStep) =>
   s.do === "type" || s.do === "keys" || (s.do === "action" && ["type_text", "press_enter", "paste"].includes(s.action));
 
-export async function runLearned(command: LearnedCommand, value: string | null, deps: StepDeps): Promise<void> {
+export async function runLearned(command: LearnedCommand, value: string | null, deps: StepDeps): Promise<{ clicked?: string }> {
   const { os } = deps;
+  let clicked: string | undefined;
   for (const [i, original] of command.steps.entries()) {
     const step = withValue(original, value);
     // The app the keys are for comes forward first; then, whatever the lesson
@@ -75,12 +76,16 @@ export async function runLearned(command: LearnedCommand, value: string | null, 
         await typeOrFail(os, step.text, front || "the front window");
         break;
       }
-      case "click":
-        await os.click({ text: step.target });
+      case "click": {
+        const r = await os.click({ text: step.target });
+        clicked = r.label || step.target;
         break;
-      case "element":
-        await os.actOnElement(step.index, step.how, step.label);
+      }
+      case "element": {
+        const r = await os.actOnElement(step.index, step.how, step.label);
+        if (step.how === "press" || step.how === "select") clicked = r.label || step.label;
         break;
+      }
       case "wait":
         await sleep(step.ms);
         break;
@@ -88,4 +93,5 @@ export async function runLearned(command: LearnedCommand, value: string | null, 
     // A beat between steps, for a window, a menu or a page to catch up.
     if (i < command.steps.length - 1 && step.do !== "wait") await sleep(250);
   }
+  return clicked ? { clicked } : {};
 }

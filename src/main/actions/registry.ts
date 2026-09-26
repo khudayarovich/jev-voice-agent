@@ -972,7 +972,7 @@ export const ACTIONS = {
       }
       // Not remembered as a page: a result's link is often a redirect, and
       // where it lands is the user's own reading, to be kept.
-      return { detail: `Clicked ${r.label || target}` };
+      return { detail: `Clicked ${r.label || target}`, clicked: r.label || target };
     },
   }),
 
@@ -1121,14 +1121,14 @@ export const ACTIONS = {
       if (!learned) throw new Error("I don't know that command any more");
       const value = parameterValue(learned, ctx.transcript);
       if (learned.parameter && !value) throw new Error(`Say the ${learned.parameter.name.replace(/_/g, " ")} too`);
-      await runLearned(learned, value, {
+      const did = await runLearned(learned, value, {
         os,
         runAction: (key, args) => runStep(key, args, os, ctx),
         openUrl: async (url) => {
           await showPage(url, os, ctx);
         },
       });
-      return { detail: learned.title };
+      return { detail: learned.title, ...(did.clicked ? { clicked: did.clicked } : {}) };
     },
   }),
 
