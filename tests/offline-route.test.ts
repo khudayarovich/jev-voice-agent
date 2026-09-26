@@ -400,3 +400,24 @@ test("dictation lands in the input or says so; it never reports words that went 
   const { os: blind } = recorder({ inputValue: null });
   assert.match((await execute("type_text", { text: "hello" }, blind, ctx("type hello"))).detail ?? "", /couldn't confirm/);
 });
+
+test("'search for <an app>' opens the app; a front app's own search box is used; the web only when asked", async () => {
+  // From real use: "search for FaceTime" opened the browser on a Google page.
+  const { calls, os } = recorder();
+  const r = await execute("web_search", { query: "FaceTime" }, os, ctx("search for facetime", { installedApps: ["FaceTime", "Safari"] }));
+  assert.equal(r.detail, "Opened FaceTime");
+  assert.deepEqual(calls.map((c) => c.method), ["openApp"]);
+
+  const { calls: c2, os: os2 } = recorder({
+    screenElements: { app: "Finder", elements: [{ i: 3, role: "Button", label: "Back", x: 0, y: 0, w: 1, h: 1 }, { i: 7, role: "SearchField", label: "Search", x: 0, y: 0, w: 1, h: 1 }] },
+    inputValue: "invoices",
+  });
+  const r2 = await execute("web_search", { query: "invoices" }, os2, ctx("search for invoices", { focusedApp: "Finder" }));
+  assert.equal(r2.detail, "Searched Finder for “invoices”");
+  assert.deepEqual(c2.filter((c) => c.method === "actOnElement")[0]?.args, [7, "focus", "Search"]);
+  assert.ok(c2.some((c) => c.method === "keystroke"));
+
+  const { calls: c3, os: os3 } = recorder({ browserTab: null });
+  await execute("web_search", { query: "invoices" }, os3, ctx("search the web for invoices", { focusedApp: "Finder" }));
+  assert.ok(!c3.some((c) => c.method === "screenElements"), "asked for the web: no search box looked for");
+});

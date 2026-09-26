@@ -323,6 +323,9 @@ test("an element step points into the screen as listed, and is never kept", asyn
     assert.equal(usesScreen(r.command), true);
     assert.equal(r.command.confirm, false);
   }
+  // A step at an item with no words: refused — that was the window's close button once.
+  const blank = checkLesson({ ...answer, command: { ...answer.command, steps: [{ ...step, index: 3 }] } }, { ...checks, screen: [...checks.screen, { role: "Button", label: "" }] }, { request: "x", model: "m" });
+  assert.equal(blank.ok, false);
   // A step at nothing, and a step at something destructive.
   const gone = checkLesson({ ...answer, command: { ...answer.command, steps: [{ ...step, index: 9 }] } }, checks, { request: "x", model: "m" });
   assert.equal(gone.ok, false);

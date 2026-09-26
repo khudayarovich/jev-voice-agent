@@ -208,7 +208,7 @@ export interface LessonChecks {
 
 /** Words on a menu item, a button or a shortcut's purpose that make it ask first. */
 const DESTRUCTIVE =
-  /\b(delete|remove|erase|trash|discard|uninstall|format|send|submit|pay|buy|purchase|order|checkout|sign out|log out|logout|unsubscribe|deactivate|reset|empty|quit|close all|restart|shut ?down|force)\b/i;
+  /\b(delete|remove|erase|trash|discard|uninstall|format|send|submit|pay|buy|purchase|order|checkout|sign out|log out|logout|unsubscribe|deactivate|reset|empty|quit|close all|close window|minimize window|restart|shut ?down|force)\b/i;
 
 const MODIFIER_ALIASES: Record<string, string> = {
   cmd: "cmd", command: "cmd", "⌘": "cmd",
@@ -339,6 +339,9 @@ function toStep(raw: RawStep, checks: LessonChecks): { step: LearnedStep; destru
       const index = typeof raw.index === "number" ? Math.round(raw.index) : -1;
       const item = checks.screen?.[index];
       if (!item) return "an element step points at nothing on screen";
+      // A blank was pressed once as "the plus button": it was the window's
+      // close button. Nothing without words on or about it gets pressed.
+      if (!item.label.trim()) return "an element step points at an item with no words on it";
       const how = str(raw.how) ?? "press";
       if (!["press", "select", "focus", "scroll_down", "scroll_up"].includes(how)) return `"${how}" is not something to do to an element`;
       return {

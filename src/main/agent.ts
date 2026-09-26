@@ -796,7 +796,7 @@ async function runClauses(
     // from the screen and the request, rather than given up on.
     if (canLearn() && worthWorkingOut(d, r)) {
       fileLog("agent", "working-out", { clause: clauses[i], action: d.action, outcome: r.outcome, detail: r.detail });
-      await learn(u, s, clauses[i]!, e);
+      await learn(u, s, clauses[i]!, e, "failure");
       return;
     }
 
@@ -1147,7 +1147,7 @@ const MAX_ROUNDS = 4;
  * few rounds. A command that works anywhere is kept for next time; one made
  * for this screen is done once.
  */
-async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<void> {
+async function learn(u: Utterance, s: Session, clause: string, e: Env, origin: "unknown" | "failure" = "unknown"): Promise<void> {
   const settings = getSettings();
   s.finished = true;
   coordinator.setState("thinking", "Working it out…");
@@ -1227,8 +1227,21 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
       confirm: lesson.confirm, done: verdict.done, ms: Date.now() - started,
     });
 
-    // Works anywhere, and completes the task: a command worth keeping.
-    if (round === 1 && verdict.done && !usesScreen(lesson)) {
+    // "Click on apps" with nothing called that on screen: the teacher once
+    // answered with the Applications folder. A click is a click; when the
+    // screen has no such thing, that is the answer.
+    if (/^(?:and\s+|then\s+|please\s+)?(?:click|press|tap|select|choose)\b/i.test(clause) && !usesScreen(lesson)) {
+      const named = clause.replace(/^(?:and\s+|then\s+|please\s+)?(?:click|press|tap|select|choose)\s+(?:on\s+)?(?:the\s+)?/i, "").replace(/[.?!]+$/, "");
+      fileLog("learn", "declined", { request: clause, reason: "not on screen", ms: Date.now() - started });
+      finish(u, s, { outcome: "rejected", action: null, detail: `I don't see “${named}” on the screen`, decision: null });
+      return;
+    }
+
+    // Works anywhere, and completes the task: a command worth keeping — when
+    // the request was one nothing covered. Made up for a command that failed
+    // or was unsure, it is done once: "search for FaceTime" once became a
+    // saved "search the web", and would have sent every search to Google.
+    if (round === 1 && verdict.done && !usesScreen(lesson) && origin === "unknown") {
       proposals.set(requestKey(clause), { lesson, at: Date.now() });
       await settleLesson(u, s, clause, e, lesson);
       return;

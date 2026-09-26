@@ -108,6 +108,17 @@ export function explainLast(ctx: ActionContext): string {
   return `That didn't work: ${last.detail}`;
 }
 
+const squashName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** The front window's own search field, if it shows one. */
+async function searchBoxOnScreen(os: PlatformAdapter): Promise<{ i: number; label: string } | null> {
+  const shot = await os.screenElements().catch(() => null);
+  const elements: { i: number; role: string; label: string }[] = shot?.elements ?? [];
+  const box = elements.find((e) => e.role === "SearchField")
+    ?? elements.find((e) => (e.role === "TextField" || e.role === "TextArea") && /search|find|filter/i.test(e.label));
+  return box ? { i: box.i, label: box.label } : null;
+}
+
 /** The apps the user can see, the one in front first — and never this one. */
 function appsOnScreen(ctx: ActionContext): string[] {
   const shown = ctx.windowedApps?.length ? ctx.windowedApps : ctx.runningApps;
@@ -883,6 +894,28 @@ export const ACTIONS = {
       ),
     },
     async run({ query }, os, ctx) {
+      const said = ctx.transcript;
+      const wantsWeb = /\b(?:web|online|internet|google|bing|duckduckgo|youtube|wikipedia|amazon|reddit|github|browser|\.com|\.org)\b/i.test(said);
+      if (!wantsWeb) {
+        // "Search for FaceTime": the app, not a Google page about it.
+        const app = [...ctx.runningApps, ...ctx.installedApps].find((a) => squashName(a) === squashName(query));
+        if (app) {
+          await os.openApp(app);
+          return { detail: `Opened ${app}`, app };
+        }
+        // An app with a search box of its own in front — Finder, Settings,
+        // a chat, an editor: search there, as the user can see it.
+        if (ctx.focusedApp && !isBrowser(ctx.focusedApp)) {
+          const box = await searchBoxOnScreen(os);
+          if (box) {
+            await os.actOnElement(box.i, "focus", box.label);
+            await new Promise((r) => setTimeout(r, 150));
+            await typeOrFail(os, query, ctx.focusedApp);
+            await os.keystroke({ key: "return" });
+            return { detail: `Searched ${ctx.focusedApp} for “${query}”`, app: ctx.focusedApp };
+          }
+        }
+      }
       const plan = planSearch(withoutBrowser(ctx.transcript) || query, query, ctx.windowTitle, ctx.lastPage ?? "");
       const browser = await showPage(plan.url, os, ctx);
       const detail =

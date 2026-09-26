@@ -546,6 +546,55 @@ struct Listed {
   let frame: CGRect
 }
 
+/** The window's own buttons, which have no words on them. */
+let WINDOW_BUTTONS: [String: String] = [
+  "AXCloseButton": "close window", "AXMinimizeButton": "minimize window", "AXZoomButton": "zoom window",
+  "AXFullScreenButton": "full screen", "AXToolbarButton": "toolbar",
+]
+
+/** Descriptions of the pictures inside: an icon button's only words, often. */
+func imageWords(_ element: AXUIElement, depth: Int) -> String {
+  guard depth > 0 else { return "" }
+  var parts: [String] = []
+  for child in children(element) {
+    let r = role(child)
+    if r == "AXImage" {
+      let d = text(child, kAXDescriptionAttribute as String)
+      if !d.isEmpty { parts.append(d) }
+    } else {
+      let inner = imageWords(child, depth: depth - 1)
+      if !inner.isEmpty { parts.append(inner) }
+    }
+    if parts.count >= 3 { break }
+  }
+  return parts.joined(separator: " ")
+}
+
+/**
+ * Words for a control that has none on it: what kind of button it is, its
+ * tooltip, its icon, its identifier in a web page. A blank was pressed once
+ * as "the plus button" — it was the window's close button.
+ */
+func identity(_ element: AXUIElement) -> String {
+  var parts: [String] = []
+  let sub = text(element, kAXSubroleAttribute as String)
+  if let named = WINDOW_BUTTONS[sub] { parts.append(named) }
+  let help = text(element, kAXHelpAttribute as String).trimmingCharacters(in: .whitespacesAndNewlines)
+  if !help.isEmpty { parts.append("tip: \(help.prefix(60))") }
+  let icon = imageWords(element, depth: 3)
+  if !icon.isEmpty { parts.append("icon: \(icon.prefix(40))") }
+  let domId = text(element, "AXDOMIdentifier")
+  if !domId.isEmpty { parts.append("id: \(domId.prefix(40))") }
+  if let classes = attribute(element, "AXDOMClassList") as? [String], !classes.isEmpty {
+    parts.append("class: \(classes.prefix(4).joined(separator: " ").prefix(60))")
+  }
+  let described = text(element, kAXRoleDescriptionAttribute as String)
+  if parts.isEmpty, !described.isEmpty, !["button", "group", "text", "link", "image"].contains(described) {
+    parts.append(described)
+  }
+  return parts.isEmpty ? "" : "(\(parts.joined(separator: "; ")))"
+}
+
 func frame(of element: AXUIElement) -> CGRect {
   var origin = CGPoint.zero
   var size = CGSize.zero
@@ -572,7 +621,12 @@ func listed(in window: AXUIElement, app: AXUIElement) -> [Listed] {
     if LISTED_ROLES.contains(r) {
       let f = frame(of: element)
       if f.width >= 2, f.height >= 2 {
-        let l = r == "AXRow" || r == "AXOutlineRow" ? textInside(element, depth: 4) : label(element)
+        var l = r == "AXRow" || r == "AXOutlineRow" ? textInside(element, depth: 4) : label(element)
+        // No words on it: say what can be seen about it instead.
+        if l.isEmpty || r == "AXButton" && WINDOW_BUTTONS[text(element, kAXSubroleAttribute as String)] != nil {
+          let more = identity(element)
+          l = l.isEmpty ? more : "\(l) \(more)"
+        }
         let v = INPUT_ROLES.contains(r) || r == "AXSlider" || r == "AXPopUpButton" || r == "AXCheckBox" || r == "AXSwitch"
           ? ((attribute(element, kAXValueAttribute as String).map { "\($0)" }) ?? "") : ""
         let words = String(l.prefix(80))
