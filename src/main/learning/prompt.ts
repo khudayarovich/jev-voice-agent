@@ -13,6 +13,8 @@ export interface LessonFacts {
   apps: string[];
   shortcuts: string[];
   focusedApp: string;
+  /** What is on screen now, one line per item: "14: Button "Details…" @812,301 60×22". */
+  screen?: string[];
 }
 
 export const TEACHER_RULES = `You teach a Mac voice assistant a command it does not have yet.
@@ -26,6 +28,7 @@ Steps (every field of a step is present; those it does not use are null):
 - open_url: open an https address in the user's browser.
 - type: type text into whatever is focused.
 - click: click a button, link or list item on screen by the words on it.
+- element: one item from the list of what is on screen right now, by its index, with how: press, select (a row), focus (a text input, before typing), scroll_down or scroll_up (a scroll area or list). Use this when the request is about what is on the screen now — "the details of the connected network", "the video that is 3 minutes long", "scroll the right pane" — choosing by the items' words and places (x grows to the right, y downwards). A command with element steps is done once and not remembered, so its examples matter less; still describe it.
 - wait: pause for ms milliseconds, at most 3000 — after opening an app or a page, before acting on it.
 
 A value: if the request carries something that will differ each time ("search Amazon for headphones"), define one parameter — a name, a description, and the phrases the value follows in a request ("search amazon for", "find on amazon", "look up on amazon") — and write {value} where it goes in a step: an address, text to type, a click target, or a text argument. Otherwise parameter is null.
@@ -47,6 +50,9 @@ export function lessonMessages(facts: LessonFacts): { role: "system" | "user"; c
     `Apps on this Mac: ${facts.apps.join(", ")}`,
     `The user's Shortcuts: ${facts.shortcuts.length ? facts.shortcuts.join(", ") : "none"}`,
     `The app in front: ${facts.focusedApp || "unknown"}`,
+    ...(facts.screen?.length
+      ? ["", `On screen now, in ${facts.focusedApp || "the front window"} (index: kind "words" [= value] @x,y w×h):`, ...facts.screen]
+      : []),
   ].join("\n");
   return [
     { role: "system", content: `${TEACHER_RULES}\n\n${context}` },

@@ -30,7 +30,7 @@ import { WhisperEngine } from "./audio/whisper.ts";
 import { coordinator } from "./coordinator.ts";
 import { isSelfAudioActive, play } from "./earcons.ts";
 import { commandCatalog, lessonChecks } from "./learning/catalog.ts";
-import { type Checked, type LearnedCommand, checkLesson, parameterValue, summarize } from "./learning/lesson.ts";
+import { type Checked, type LearnedCommand, checkLesson, parameterValue, summarize, usesScreen } from "./learning/lesson.ts";
 import { lessonMessages } from "./learning/prompt.ts";
 import { countUse, learnedCommands, recordLesson, remember as rememberLesson } from "./learning/store.ts";
 import { askTeacher } from "./learning/teacher.ts";
@@ -784,6 +784,14 @@ async function runClauses(
       return;
     }
 
+    // A click that found nothing by the words alone — "the details of the
+    // connected network" — is worked out from what is on screen instead.
+    if (r.outcome === "failed" && d.action === "click_on" && /Couldn't find|not one beside/.test(r.detail) && canLearn()) {
+      fileLog("agent", "reading-screen", { clause: clauses[i], failed: r.detail });
+      await learn(u, s, clauses[i]!, e);
+      return;
+    }
+
     if (r.clarify) {
       // Ask which one, and hold the conversation open for the answer.
       s.finished = true;
@@ -1126,9 +1134,16 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
     fileLog("learn", "reproposed", { request: clause, id: kept.lesson.id });
   } else {
     try {
+      // What is on screen goes along, so the teacher can point at it: the
+      // details of the connected network, the video of a given length, the
+      // right-hand pane to scroll.
+      const screen = await platform().screenElements().catch(() => ({ app: "", elements: [] }));
+      const lines = screen.elements.map(
+        (e) => `${e.i}: ${e.role} "${e.label}"${e.value ? ` = "${e.value}"` : ""} @${e.x},${e.y} ${e.w}×${e.h}`,
+      );
       const [catalog, checks] = await Promise.all([
         commandCatalog(ctx),
-        lessonChecks(ctx, learnedCommands().map((c) => c.id)),
+        lessonChecks(ctx, learnedCommands().map((c) => c.id), screen.elements.map((e) => ({ role: e.role, label: e.label }))),
       ]);
       const messages = lessonMessages({
         request: clause,
@@ -1136,6 +1151,7 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
         apps: checks.apps,
         shortcuts: ctx.automations,
         focusedApp: ctx.focusedApp,
+        screen: lines,
       });
       const answer = await askTeacher(messages, { apiKey: getOpenRouterKey(), model: settings.learnModel });
       checked = checkLesson(answer, checks, { request: clause, model: settings.learnModel });
@@ -1153,12 +1169,23 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
   }
 
   const lesson = checked.command;
-  proposals.set(requestKey(clause), { lesson, at: Date.now() });
+  if (!usesScreen(lesson)) proposals.set(requestKey(clause), { lesson, at: Date.now() });
   fileLog("learn", "proposed", {
     request: clause, id: lesson.id, title: lesson.title, steps: lesson.steps,
     confirm: lesson.confirm, ms: Date.now() - started,
   });
   const tryCtx = { ...ctx, learned: [...(ctx.learned ?? []), lesson] };
+
+  // Made for the screen as it is now: done once, never kept.
+  if (usesScreen(lesson)) {
+    clarifying = null;
+    pending = null;
+    coordinator.setState("executing", lesson.title);
+    const r = await serially(() => run("run_learned", { command: lesson.id }, tryCtx, null, false));
+    fileLog("learn", "did-on-screen", { id: lesson.id, outcome: r.outcome, detail: r.detail });
+    finish(u, s, { ...r, detail: r.outcome === "ok" ? lesson.title : r.detail });
+    return;
+  }
 
   // A command that takes a value, asked for without one ("learn renaming
   // folders"): nothing to try it on yet. Kept, with a word on how to say it.

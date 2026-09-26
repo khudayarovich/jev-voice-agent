@@ -4,8 +4,10 @@ import type {
   ClickResult,
   FocusContext,
   KeyCombo,
+  ElementHow,
   NowPlaying,
   OpenWindow,
+  ScreenElement,
   PlatformAdapter,
 } from "../types.ts";
 import { NotImplementedError } from "../types.ts";
@@ -103,6 +105,8 @@ export class WindowsPlatform implements PlatformAdapter {
   keystroke(_combo: KeyCombo): Promise<void> { this.nope("Synthetic keystrokes"); }
   typeText(): Promise<void> { this.nope("Typing text"); }
   focusInput(): Promise<boolean> { return Promise.resolve(false); }
+  screenElements(): Promise<{ app: string; elements: ScreenElement[] }> { return Promise.resolve({ app: "", elements: [] }); }
+  actOnElement(_i: number, _how: ElementHow): Promise<{ label: string }> { this.nope("Acting on screen"); }
   inputValue(): Promise<string | null> { return Promise.resolve(null); }
   scroll(): Promise<void> { this.nope("Scrolling"); }
   scrollToEnd(): Promise<void> { this.nope("Scrolling"); }

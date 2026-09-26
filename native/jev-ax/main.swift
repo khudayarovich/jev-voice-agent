@@ -8,6 +8,8 @@
 //   jev-ax windows                  the windows showing on this desktop, and their apps
 //   jev-ax media --key play|next|previous   press a media key, as the keyboard's own would
 //   jev-ax request --screen         ask for Screen Recording, so the app is listed for it
+//   jev-ax elements                 what is on screen: each control with its words and place
+//   jev-ax act --index 14 --how press --label "Details"   act on one of those (press, focus, select, scroll_down, scroll_up)
 //   jev-ax input                    put the keyboard focus in the window's text input
 //   jev-ax input --value            what the focused element holds, to check typed text landed
 //   jev-ax tree | headings          what the window exposes, for diagnosing
@@ -527,6 +529,119 @@ func windowOwners() -> Never {
   emit(["ok": true, "apps": owners, "windows": windows])
 }
 
+// MARK: - The screen, as a list
+
+let LISTED_ROLES: Set<String> = [
+  "AXButton", "AXLink", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXSwitch", "AXRadioButton", "AXTab",
+  "AXTextField", "AXTextArea", "AXSearchField", "AXComboBox", "AXRow", "AXOutlineRow", "AXDisclosureTriangle",
+  "AXScrollArea", "AXStaticText", "AXHeading", "AXSlider", "AXIncrementor", "AXMenuItem", "AXTable", "AXOutline", "AXList",
+]
+let MAX_LISTED = 160
+
+struct Listed {
+  let element: AXUIElement
+  let role: String
+  let label: String
+  let value: String
+  let frame: CGRect
+}
+
+func frame(of element: AXUIElement) -> CGRect {
+  var origin = CGPoint.zero
+  var size = CGSize.zero
+  if let p = attribute(element, kAXPositionAttribute as String) { AXValueGetValue(p as! AXValue, .cgPoint, &origin) }
+  if let s = attribute(element, kAXSizeAttribute as String) { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+  return CGRect(origin: origin, size: size)
+}
+
+/**
+ * What is on screen, in reading order, for a model to choose from: each
+ * control, row, heading and piece of text, with its words and its place. The
+ * same walk, in the same order, is what `act` uses to find an item again, so
+ * the list is the contract between the two.
+ */
+func listed(in window: AXUIElement, app: AXUIElement) -> [Listed] {
+  _ = page(in: window, app: app)
+  var queue: [AXUIElement] = [window]
+  var out: [Listed] = []
+  var visited = 0
+  while !queue.isEmpty, visited < 8000, out.count < MAX_LISTED {
+    let element = queue.removeFirst()
+    visited += 1
+    let r = role(element)
+    if LISTED_ROLES.contains(r) {
+      let f = frame(of: element)
+      if f.width >= 2, f.height >= 2 {
+        let l = r == "AXRow" || r == "AXOutlineRow" ? textInside(element, depth: 4) : label(element)
+        let v = INPUT_ROLES.contains(r) || r == "AXSlider" || r == "AXPopUpButton" || r == "AXCheckBox" || r == "AXSwitch"
+          ? ((attribute(element, kAXValueAttribute as String).map { "\($0)" }) ?? "") : ""
+        let words = String(l.prefix(80))
+        if !(r == "AXStaticText" && words.isEmpty) {
+          out.append(Listed(element: element, role: r, label: words, value: String(v.prefix(60)), frame: f))
+        }
+      }
+    }
+    // Rows carry their words already; what is inside them is not listed twice.
+    if r == "AXRow" || r == "AXOutlineRow" { continue }
+    queue.append(contentsOf: children(element))
+  }
+  return out
+}
+
+func elements() -> Never {
+  let (app, window, appName) = focusedWindow()
+  let items = listed(in: window, app: app).enumerated().map { (i, e) -> [String: Any] in
+    var d: [String: Any] = ["i": i, "role": String(e.role.dropFirst(2)), "label": e.label,
+                            "x": Int(e.frame.origin.x), "y": Int(e.frame.origin.y), "w": Int(e.frame.width), "h": Int(e.frame.height)]
+    if !e.value.isEmpty { d["value"] = e.value }
+    return d
+  }
+  let wf = frame(of: window)
+  emit(["ok": true, "app": appName, "window": ["x": Int(wf.origin.x), "y": Int(wf.origin.y), "w": Int(wf.width), "h": Int(wf.height)], "elements": items])
+}
+
+/** Act on one listed item, found again by its index and checked by its words. */
+func act(index: Int, how: String, label wanted: String?) -> Never {
+  let (app, window, _) = focusedWindow()
+  let items = listed(in: window, app: app)
+  guard index >= 0, index < items.count else { fail("changed", "The screen has changed; that item is gone.") }
+  let item = items[index]
+  if let wanted = wanted, !normalized(wanted).isEmpty, normalized(item.label) != normalized(wanted),
+     !normalized(item.label).contains(normalized(wanted)) {
+    fail("changed", "The screen has changed: item \(index) now says \"\(item.label)\".")
+  }
+  let fields: [String: Any] = ["ok": true, "label": item.label, "role": item.role, "how": how]
+  switch how {
+  case "press":
+    press(item.element, dryRun: false, label: item.label)
+  case "select":
+    if AXUIElementSetAttributeValue(item.element, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success { emit(fields) }
+    press(item.element, dryRun: false, label: item.label)
+  case "focus":
+    AXUIElementSetAttributeValue(item.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    usleep(100_000)
+    if let now = focusedElement(app), CFEqual(now, item.element) { emit(fields) }
+    press(item.element, dryRun: false, label: item.label)
+  case "scroll_down", "scroll_up":
+    // The wheel, over the middle of it: what a person does to that pane.
+    _ = AXUIElementPerformAction(item.element, "AXScrollToVisible" as CFString)
+    let point = CGPoint(x: item.frame.midX, y: item.frame.midY)
+    CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    usleep(60_000)
+    let lines: Int32 = how == "scroll_down" ? -12 : 12
+    for _ in 0..<3 {
+      if let e = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0) {
+        e.location = point
+        e.post(tap: .cghidEventTap)
+      }
+      usleep(40_000)
+    }
+    emit(fields)
+  default:
+    fail("usage", "act --how press|select|focus|scroll_down|scroll_up")
+  }
+}
+
 // MARK: - Text inputs
 
 let INPUT_ROLES: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
@@ -703,6 +818,10 @@ case "windows":
   windowOwners()
 case "media":
   pressMediaKey(option("--key") ?? "", dryRun: dryRun)
+case "elements":
+  elements()
+case "act":
+  act(index: option("--index").flatMap { Int($0) } ?? -1, how: option("--how") ?? "press", label: option("--label"))
 case "input":
   if args.contains("--value") { inputValue() }
   focusInput()

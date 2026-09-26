@@ -36,7 +36,14 @@ export type LearnedStep =
   | { do: "type"; text: string }
   /** Something on screen, by the words on it. */
   | { do: "click"; target: string }
+  /** One item of the screen as it was listed for the teacher: once only, never remembered. */
+  | { do: "element"; index: number; how: "press" | "select" | "focus" | "scroll_down" | "scroll_up"; label: string }
   | { do: "wait"; ms: number };
+
+/** A command made for the screen as it is now: done once, not kept. */
+export function usesScreen(command: { steps: LearnedStep[] }): boolean {
+  return command.steps.some((s) => s.do === "element");
+}
 
 export interface LearnedCommand {
   /** snake_case, unique among learned commands. */
@@ -125,9 +132,11 @@ export const LESSON_SCHEMA = {
               items: {
                 type: "object",
                 additionalProperties: false,
-                required: ["do", "action", "args", "app", "combo", "path", "url", "text", "target", "ms"],
+                required: ["do", "action", "args", "app", "combo", "path", "url", "text", "target", "ms", "index", "how"],
                 properties: {
-                  do: { type: "string", enum: ["action", "keys", "menu", "open_url", "type", "click", "wait"] },
+                  do: { type: "string", enum: ["action", "keys", "menu", "open_url", "type", "click", "element", "wait"] },
+                  index: { type: ["integer", "null"] },
+                  how: { anyOf: [{ type: "null" }, { type: "string", enum: ["press", "select", "focus", "scroll_down", "scroll_up"] }] },
                   action: { type: ["string", "null"] },
                   args: {
                     anyOf: [
@@ -171,6 +180,8 @@ interface RawStep {
   text?: unknown;
   target?: unknown;
   ms?: unknown;
+  index?: unknown;
+  how?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +198,8 @@ export interface LessonChecks {
   apps: string[];
   /** Ids already taken, by commands built in or learned. */
   takenIds: Set<string>;
+  /** What is on screen, as listed for the teacher: an element step must point into it. */
+  screen?: { role: string; label: string }[];
 }
 
 /** Words on a menu item, a button or a shortcut's purpose that make it ask first. */
@@ -317,6 +330,17 @@ function toStep(raw: RawStep, checks: LessonChecks): { step: LearnedStep; destru
       const target = str(raw.target);
       if (!target || target.length > 80) return "a click step needs the words on what to click";
       return { step: { do: "click", target }, destructive: DESTRUCTIVE.test(target) };
+    }
+    case "element": {
+      const index = typeof raw.index === "number" ? Math.round(raw.index) : -1;
+      const item = checks.screen?.[index];
+      if (!item) return "an element step points at nothing on screen";
+      const how = str(raw.how) ?? "press";
+      if (!["press", "select", "focus", "scroll_down", "scroll_up"].includes(how)) return `"${how}" is not something to do to an element`;
+      return {
+        step: { do: "element", index, how: how as "press", label: item.label },
+        destructive: DESTRUCTIVE.test(item.label),
+      };
     }
     case "wait": {
       const ms = typeof raw.ms === "number" ? Math.round(raw.ms) : NaN;
@@ -458,6 +482,8 @@ export function summarize(command: LearnedCommand): string {
         return `type "${s.text.length > 24 ? `${s.text.slice(0, 23)}…` : s.text}"`;
       case "click":
         return `click ${s.target}`;
+      case "element":
+        return `${s.how.replace("_", " ")} “${s.label}”`;
       case "wait":
         return "wait";
     }

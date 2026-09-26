@@ -13,6 +13,8 @@ import type {
   PlatformAdapter,
   NowPlaying,
   OpenWindow,
+  ElementHow,
+  ScreenElement,
 } from "../types.ts";
 import { browseScript, frontTabScript, parseFrontTab, scriptFamily } from "./browsers.ts";
 import { defaultBrowserId, parseMdls, parseMdlsDate } from "./launchservices.ts";
@@ -610,6 +612,23 @@ return appName & "\\n" & winTitle`;
         }
       })();
     }, 700);
+  }
+
+  async screenElements(): Promise<{ app: string; elements: ScreenElement[] }> {
+    const { stdout } = await exec(screenHelper(), ["elements"], { timeout: 8000, maxBuffer: 4 * 1024 * 1024 });
+    const r = JSON.parse(stdout) as { ok: boolean; app?: string; elements?: ScreenElement[]; message?: string; error?: string };
+    if (!r.ok) {
+      if (r.error === "no-permission") throw new Error("Accessibility permission is needed to read the screen. Grant it in Settings → Permissions.");
+      throw new Error(r.message ?? "Could not read the screen");
+    }
+    return { app: r.app ?? "", elements: r.elements ?? [] };
+  }
+
+  async actOnElement(index: number, how: ElementHow, label: string): Promise<{ label: string }> {
+    const { stdout } = await exec(screenHelper(), ["act", "--index", String(index), "--how", how, "--label", label], { timeout: 8000 });
+    const r = JSON.parse(stdout) as { ok: boolean; label?: string; message?: string };
+    if (!r.ok) throw new Error(r.message ?? "Could not do that on screen");
+    return { label: r.label ?? label };
   }
 
   async focusInput(): Promise<boolean> {

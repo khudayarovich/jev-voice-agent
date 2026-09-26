@@ -73,6 +73,9 @@ export async function runLearned(command: LearnedCommand, value: string | null, 
       case "click":
         await os.click({ text: step.target });
         break;
+      case "element":
+        await os.actOnElement(step.index, step.how, step.label);
+        break;
       case "wait":
         await sleep(step.ms);
         break;

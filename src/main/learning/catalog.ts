@@ -42,7 +42,11 @@ export async function commandCatalog(ctx: ActionContext): Promise<string> {
 }
 
 /** The checks a lesson's steps must pass, against this Mac as it is now. */
-export async function lessonChecks(ctx: ActionContext, learnedIds: string[]): Promise<LessonChecks> {
+export async function lessonChecks(
+  ctx: ActionContext,
+  learnedIds: string[],
+  screen?: { role: string; label: string }[],
+): Promise<LessonChecks> {
   const apps = [...new Set([...ctx.runningApps, ...ctx.installedApps])];
   const values = new Map<string, string[] | null>();
   for (const key of stepKeys()) {
@@ -54,6 +58,7 @@ export async function lessonChecks(ctx: ActionContext, learnedIds: string[]): Pr
 
   return {
     apps,
+    ...(screen ? { screen } : {}),
     takenIds: new Set([...ACTION_KEYS, ...learnedIds]),
     isDestructive: (action) => ACTION_KEYS.includes(action as ActionKey) && isDestructive(action as ActionKey),
     checkAction(action, args) {

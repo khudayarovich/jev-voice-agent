@@ -49,6 +49,21 @@ export interface OpenWindow {
   title: string;
 }
 
+/** One thing on screen, as the helper lists it: for a model to choose from. */
+export interface ScreenElement {
+  i: number;
+  role: string;
+  label: string;
+  value?: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** What may be done to a listed element. */
+export type ElementHow = "press" | "select" | "focus" | "scroll_down" | "scroll_up";
+
 /** What a music player is doing. */
 export interface NowPlaying {
   app: string;
@@ -160,6 +175,10 @@ export interface PlatformAdapter {
   // --- on screen ---------------------------------------------------------
   /** Press a link or button in the window in front, found by its words or position. */
   click(target: ClickTarget): Promise<ClickResult>;
+  /** What is on screen in the front window: controls, rows, headings, text, with their places. */
+  screenElements(): Promise<{ app: string; elements: ScreenElement[] }>;
+  /** Act on one listed element, found again by index and checked by its words. */
+  actOnElement(index: number, how: ElementHow, label: string): Promise<{ label: string }>;
   /** Choose a menu item of the app in front: ["File", "New Folder"], or three deep. */
   chooseMenuItem(path: string[]): Promise<void>;
 

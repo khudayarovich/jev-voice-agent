@@ -307,3 +307,25 @@ test("a learned command will not type while a shell is in front", async () => {
   );
   assert.ok(!calls.includes("typeText"), "nothing was typed");
 });
+
+test("an element step points into the screen as listed, and is never kept", async () => {
+  const { checkLesson, usesScreen } = await import("../src/main/learning/lesson.ts");
+  const checks = {
+    apps: ["Finder"], takenIds: new Set<string>(), isDestructive: () => false, checkAction: () => null,
+    screen: [{ role: "Row", label: "FASHUZ Connected" }, { role: "Button", label: "Details…" }, { role: "Button", label: "Delete network" }],
+  };
+  const step = { do: "element", index: 1, how: "press", action: null, args: null, app: null, combo: null, path: null, url: null, text: null, target: null, ms: null };
+  const answer = { possible: true, reason: "", command: { id: "wifi_details", title: "Details of the connected Wi‑Fi", describe: "Opens the details of the connected network.", examples: [], parameter: null, steps: [step] } };
+  const r = checkLesson(answer, checks, { request: "open details of the connected wifi", model: "m" });
+  assert.ok(r.ok);
+  if (r.ok) {
+    assert.deepEqual(r.command.steps[0], { do: "element", index: 1, how: "press", label: "Details…" });
+    assert.equal(usesScreen(r.command), true);
+    assert.equal(r.command.confirm, false);
+  }
+  // A step at nothing, and a step at something destructive.
+  const gone = checkLesson({ ...answer, command: { ...answer.command, steps: [{ ...step, index: 9 }] } }, checks, { request: "x", model: "m" });
+  assert.equal(gone.ok, false);
+  const risky = checkLesson({ ...answer, command: { ...answer.command, steps: [{ ...step, index: 2 }] } }, checks, { request: "x", model: "m" });
+  assert.ok(risky.ok && risky.command.confirm);
+});
