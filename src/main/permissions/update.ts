@@ -4,7 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { app, systemPreferences } from "electron";
 import { log } from "../log.ts";
-import { parseCdhash } from "./cdhash.ts";
+import { signingIdentity } from "./cdhash.ts";
 import { screenHelper } from "../platform/macos/index.ts";
 
 const exec = promisify(execFile);
@@ -31,7 +31,7 @@ async function codeHash(): Promise<string | null> {
   const bundle = path.resolve(process.execPath, "..", "..", "..");
   try {
     const { stderr } = await exec("/usr/bin/codesign", ["-dvvv", bundle], { timeout: 5000 });
-    return parseCdhash(stderr);
+    return signingIdentity(stderr);
   } catch {
     return null;
   }
