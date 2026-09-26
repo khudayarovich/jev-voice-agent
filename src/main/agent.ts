@@ -30,7 +30,7 @@ import { WhisperEngine } from "./audio/whisper.ts";
 import { coordinator } from "./coordinator.ts";
 import { isSelfAudioActive, play } from "./earcons.ts";
 import { commandCatalog, lessonChecks } from "./learning/catalog.ts";
-import { type Checked, type LearnedCommand, checkLesson, parameterValue, summarize, usesScreen } from "./learning/lesson.ts";
+import { type LearnedCommand, checkLesson, parameterValue, readVerdict, summarize, usesScreen } from "./learning/lesson.ts";
 import { lessonMessages } from "./learning/prompt.ts";
 import { countUse, learnedCommands, recordLesson, remember as rememberLesson } from "./learning/store.ts";
 import { askTeacher } from "./learning/teacher.ts";
@@ -634,6 +634,8 @@ interface Pending {
   askedAt: number;
   /** A command just designed, to keep if it works when tried. */
   lesson?: LearnedCommand;
+  /** Made for the screen as it is now: run on yes, but never kept. */
+  oneOff?: boolean;
   /** How long the question stands, when not the usual. */
   windowMs?: number;
 }
@@ -784,10 +786,11 @@ async function runClauses(
       return;
     }
 
-    // A click that found nothing by the words alone — "the details of the
-    // connected network" — is worked out from what is on screen instead.
-    if (r.outcome === "failed" && d.action === "click_on" && /Couldn't find|not one beside/.test(r.detail) && canLearn()) {
-      fileLog("agent", "reading-screen", { clause: clauses[i], failed: r.detail });
+    // A fixed command that could not do it — found nothing by the words,
+    // could not work out its target, was not sure — is worked out instead,
+    // from the screen and the request, rather than given up on.
+    if (canLearn() && worthWorkingOut(d, r)) {
+      fileLog("agent", "working-out", { clause: clauses[i], action: d.action, outcome: r.outcome, detail: r.detail });
       await learn(u, s, clauses[i]!, e);
       return;
     }
@@ -816,6 +819,21 @@ async function runClauses(
   }
 
   finish(u, s, { outcome: "ok", action: last?.action ?? null, detail: done.join(", ") || "Done", decision: last?.decision ?? null }, { early });
+}
+
+/**
+ * A failure the teacher may do better with: nothing found, a blank it could
+ * not fill, a guess it was not sure of. Not a missing permission, and never a
+ * destructive command, whose failure stands.
+ */
+function worthWorkingOut(d: RouteDecision, r: Outcome): boolean {
+  if (d.action && (ACTIONS[d.action] as { destructive?: boolean }).destructive) return false;
+  if (r.outcome === "failed") {
+    return /Couldn't find|not one beside|Couldn't get|could not|no text input|There is no|isn't running|did not come to the front/i.test(r.detail)
+      && !/permission/i.test(r.detail);
+  }
+  if (r.outcome === "rejected") return /Could not work out|Not sure enough|Say the |Say what/i.test(r.detail);
+  return false;
 }
 
 /** What acting on one decision produced. */
@@ -1015,7 +1033,8 @@ async function answerConfirmation(u: Utterance, s: Session): Promise<boolean> {
   if (answer === "yes") {
     const r = await serially(() => run(held.action, held.args, held.ctx, null, false));
     if (held.lesson) {
-      keepLesson(u, s, held.lesson, r);
+      if (held.oneOff) finish(u, s, { ...r, detail: r.outcome === "ok" ? held.lesson.title : r.detail });
+      else keepLesson(u, s, held.lesson, r);
       return true;
     }
     const stops = held.action === "stop_listening" || held.action === "cancel";
@@ -1111,40 +1130,53 @@ function canLearn(): boolean {
   return getSettings().learning && getOpenRouterKey() !== "";
 }
 
+/** How many times the screen is read again for one request before giving up. */
+const MAX_ROUNDS = 4;
+
 /**
- * Jev has no command for what was asked: have the teacher design one, check
- * it, and ask the user. It is tried and kept only on their yes (see
- * keepLesson), and from then on Jev chooses it like any other command.
+ * Something the fixed commands could not do: work it out. The teacher gets
+ * the request, the agent's own commands and what is on the screen, and
+ * answers with steps — or with an answer, when the request was a question
+ * about the screen. Steps run at once (a destructive one asks first), the
+ * screen is read again, and the teacher is asked whether it is done, up to a
+ * few rounds. A command that works anywhere is kept for next time; one made
+ * for this screen is done once.
  */
 async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<void> {
   const settings = getSettings();
-  const ctx: ActionContext = { ...withMemory(e), transcript: clause };
   s.finished = true;
-  coordinator.setState("thinking", "I don't know that one yet — learning it…");
+  coordinator.setState("thinking", "Working it out…");
   showHud();
   fileLog("learn", "asking", { request: clause, model: settings.learnModel });
   const started = Date.now();
 
-  let checked: Checked;
+  // Designed minutes ago, tried, and not kept: offered again rather than
+  // designed again.
   const kept = proposals.get(requestKey(clause));
   if (kept && Date.now() - kept.at < PROPOSAL_MS) {
-    // Designed and checked minutes ago, tried, and not kept: offer it again
-    // rather than have it designed again.
-    checked = { ok: true, command: kept.lesson };
     fileLog("learn", "reproposed", { request: clause, id: kept.lesson.id });
-  } else {
+    await settleLesson(u, s, clause, e, kept.lesson);
+    return;
+  }
+
+  const progress: string[] = [];
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
+    const ctx: ActionContext = { ...withMemory(e), transcript: clause };
+    let answer: unknown;
+    let checks: Awaited<ReturnType<typeof lessonChecks>>;
     try {
       // What is on screen goes along, so the teacher can point at it: the
       // details of the connected network, the video of a given length, the
       // right-hand pane to scroll.
       const screen = await platform().screenElements().catch(() => ({ app: "", elements: [] }));
       const lines = screen.elements.map(
-        (e) => `${e.i}: ${e.role} "${e.label}"${e.value ? ` = "${e.value}"` : ""} @${e.x},${e.y} ${e.w}×${e.h}`,
+        (el) => `${el.i}: ${el.role} "${el.label}"${el.value ? ` = "${el.value}"` : ""} @${el.x},${el.y} ${el.w}×${el.h}`,
       );
-      const [catalog, checks] = await Promise.all([
+      const [catalog, c] = await Promise.all([
         commandCatalog(ctx),
-        lessonChecks(ctx, learnedCommands().map((c) => c.id), screen.elements.map((e) => ({ role: e.role, label: e.label }))),
+        lessonChecks(ctx, learnedCommands().map((l) => l.id), screen.elements.map((el) => ({ role: el.role, label: el.label }))),
       ]);
+      checks = c;
       const messages = lessonMessages({
         request: clause,
         catalog,
@@ -1152,52 +1184,96 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
         shortcuts: ctx.automations,
         focusedApp: ctx.focusedApp,
         screen: lines,
+        progress,
       });
-      const answer = await askTeacher(messages, { apiKey: getOpenRouterKey(), model: settings.learnModel });
-      checked = checkLesson(answer, checks, { request: clause, model: settings.learnModel });
+      answer = await askTeacher(messages, { apiKey: getOpenRouterKey(), model: settings.learnModel });
     } catch (err) {
-      fileLog("learn", "failed", { request: clause, message: describe(err), ms: Date.now() - started });
-      finish(u, s, { outcome: "failed", action: null, detail: `Couldn't learn that: ${describe(err)}`, decision: null });
+      fileLog("learn", "failed", { request: clause, round, message: describe(err), ms: Date.now() - started });
+      finish(u, s, { outcome: "failed", action: null, detail: `Couldn't work that out: ${describe(err)}`, decision: null });
       return;
     }
-  }
 
-  if (!checked.ok) {
-    fileLog("learn", "declined", { request: clause, reason: checked.reason, ms: Date.now() - started });
-    finish(u, s, { outcome: "rejected", action: null, detail: `I can't learn that — ${checked.reason}`, decision: null });
-    return;
-  }
+    const verdict = readVerdict(answer);
+    fileLog("learn", "answered", { request: clause, round, done: verdict.done, steps: verdict.steps, say: verdict.say, ms: Date.now() - started });
 
-  const lesson = checked.command;
-  if (!usesScreen(lesson)) proposals.set(requestKey(clause), { lesson, at: Date.now() });
-  fileLog("learn", "proposed", {
-    request: clause, id: lesson.id, title: lesson.title, steps: lesson.steps,
-    confirm: lesson.confirm, ms: Date.now() - started,
-  });
-  const tryCtx = { ...ctx, learned: [...(ctx.learned ?? []), lesson] };
+    // Nothing left to do: an answer read off the screen, or the task complete.
+    if (verdict.steps === 0) {
+      const possible = (answer as { possible?: unknown } | null)?.possible === true;
+      if (possible || verdict.done) {
+        finish(u, s, { outcome: "ok", action: null, detail: verdict.say ?? (progress.length ? progress.join(", ") : "Done"), decision: null });
+      } else {
+        const why = checkLesson(answer, checks, { request: clause, model: settings.learnModel });
+        const reason = why.ok ? "It is not something I can do" : why.reason;
+        fileLog("learn", "declined", { request: clause, reason, ms: Date.now() - started });
+        finish(u, s, { outcome: "rejected", action: null, detail: `I can't do that — ${reason}`, decision: null });
+      }
+      return;
+    }
 
-  // Made for the screen as it is now: done once, never kept.
-  if (usesScreen(lesson)) {
+    const checked = checkLesson(answer, checks, { request: clause, model: settings.learnModel });
+    if (!checked.ok) {
+      fileLog("learn", "declined", { request: clause, reason: checked.reason, ms: Date.now() - started });
+      finish(u, s, { outcome: "rejected", action: null, detail: `I can't do that — ${checked.reason}`, decision: null });
+      return;
+    }
+    const lesson = checked.command;
+    fileLog("learn", "proposed", {
+      request: clause, round, id: lesson.id, title: lesson.title, steps: lesson.steps,
+      confirm: lesson.confirm, done: verdict.done, ms: Date.now() - started,
+    });
+
+    // Works anywhere, and completes the task: a command worth keeping.
+    if (round === 1 && verdict.done && !usesScreen(lesson)) {
+      proposals.set(requestKey(clause), { lesson, at: Date.now() });
+      await settleLesson(u, s, clause, e, lesson);
+      return;
+    }
+
+    // Made for this screen, or one round of several: done once, never kept.
+    // A step that quits, deletes or sends still asks first.
+    const tryCtx = { ...ctx, learned: [...(ctx.learned ?? []), lesson] };
+    if (lesson.confirm && settings.confirmDestructive) {
+      askLesson(clause, lesson, tryCtx, { oneOff: true, say: verdict.say });
+      return;
+    }
     clarifying = null;
     pending = null;
     coordinator.setState("executing", lesson.title);
     const r = await serially(() => run("run_learned", { command: lesson.id }, tryCtx, null, false));
-    fileLog("learn", "did-on-screen", { id: lesson.id, outcome: r.outcome, detail: r.detail });
-    finish(u, s, { ...r, detail: r.outcome === "ok" ? lesson.title : r.detail });
-    return;
+    fileLog("learn", "did", { id: lesson.id, round, outcome: r.outcome, detail: r.detail });
+    if (r.outcome !== "ok") {
+      finish(u, s, r);
+      return;
+    }
+    progress.push(summarize(lesson));
+    if (verdict.done) {
+      finish(u, s, { ...r, detail: verdict.say ?? lesson.title });
+      return;
+    }
+    coordinator.setState("thinking", "Checking the screen…");
+    e = await currentEnv();
   }
+  finish(u, s, { outcome: "failed", action: null, detail: `Stopped after ${MAX_ROUNDS} rounds: ${progress.join(", ")}`, decision: null });
+}
+
+/**
+ * A command that works anywhere: kept if it works. Tried at once, unless it
+ * would do something worth asking about or the user prefers to be asked.
+ */
+async function settleLesson(u: Utterance, s: Session, clause: string, e: Env, lesson: LearnedCommand): Promise<void> {
+  const settings = getSettings();
+  const ctx: ActionContext = { ...withMemory(e), transcript: clause };
+  const tryCtx = { ...ctx, learned: [...(ctx.learned ?? []), lesson] };
 
   // A command that takes a value, asked for without one ("learn renaming
   // folders"): nothing to try it on yet. Kept, with a word on how to say it.
   if (lesson.parameter && !parameterValue(lesson, clause)) {
     keepLesson(u, s, lesson, { outcome: "ok", action: "run_learned", detail: lesson.title, decision: null }, {
-      note: `say it with the ${lesson.parameter.name.replace(/_/g, " ")}, as in “${lesson.examples.find((e) => e.includes("{")) ?? lesson.parameter.leads[0] + " …"}”`,
+      note: `say it with the ${lesson.parameter.name.replace(/_/g, " ")}, as in “${lesson.examples.find((x) => x.includes("{")) ?? lesson.parameter.leads[0] + " …"}”`,
     });
     return;
   }
 
-  // Tried at once, unless it would do something worth asking about, or the
-  // user prefers to be asked. Kept only if it works.
   if (!settings.learnAsk && !lesson.confirm) {
     clarifying = null;
     pending = null;
@@ -1206,20 +1282,27 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
     keepLesson(u, s, lesson, r);
     return;
   }
+  askLesson(clause, lesson, tryCtx, { oneOff: false });
+}
 
+/** Put a lesson to the user: yes runs it, and keeps it unless it is one-off. */
+function askLesson(clause: string, lesson: LearnedCommand, ctx: ActionContext, opts: { oneOff: boolean; say?: string | null }): void {
   clarifying = null;
   pending = {
     action: "run_learned",
     args: { command: lesson.id },
-    ctx: tryCtx,
+    ctx,
     transcript: clause,
     askedAt: Date.now(),
     lesson,
+    oneOff: opts.oneOff,
     windowMs: LESSON_WINDOW_MS,
   };
   // One line in the overlay, which keeps the end in view when it is long: so
   // the answer to give comes last.
-  const question = `Learn “${lesson.title}”? ${summarize(lesson)}. Say yes to keep it.`;
+  const question = opts.oneOff
+    ? `${summarize(lesson)}? Say yes to do it.`
+    : `Learn “${lesson.title}”? ${summarize(lesson)}. Say yes to keep it.`;
   coordinator.setState("confirming", question);
   play("confirm");
   showHud();

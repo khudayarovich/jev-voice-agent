@@ -96,10 +96,14 @@ const MAX_TEXT = 500;
 export const LESSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["possible", "reason", "command"],
+  required: ["possible", "reason", "done", "say", "command"],
   properties: {
     possible: { type: "boolean" },
     reason: { type: "string" },
+    /** True when, after the steps given (perhaps none), the task is complete. */
+    done: { type: "boolean" },
+    /** A short answer or report for the user, or null. */
+    say: { type: ["string", "null"] },
     command: {
       anyOf: [
         { type: "null" },
@@ -356,6 +360,19 @@ const snake = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48);
 
 export type Checked = { ok: true; command: LearnedCommand } | { ok: false; reason: string };
+
+/**
+ * The verdict beside the steps: whether the task is complete once they have
+ * run, and anything to tell the user — an answer read off the screen, say.
+ */
+export function readVerdict(answer: unknown): { done: boolean; say: string | null; steps: number } {
+  const a = answer as { done?: unknown; say?: unknown; command?: { steps?: unknown[] } | null } | null;
+  return {
+    done: a?.done === true,
+    say: typeof a?.say === "string" && a.say.trim() ? a.say.trim().slice(0, 300) : null,
+    steps: Array.isArray(a?.command?.steps) ? a!.command!.steps!.length : 0,
+  };
+}
 
 /**
  * Turn what the model sent into a command, or say why it will not do. Every
