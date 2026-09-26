@@ -21,8 +21,7 @@ import {
   openRouterKeySummary,
   setApiKey,
   setOpenRouterKey,
-  updateSettings,
-} from "./settings-store.ts";
+  updateSettings, getApiKey } from "./settings-store.ts";
 import { createTray, destroyTray, hideDock, refreshTrayMenu, setTrayState } from "./tray.ts";
 import { resource } from "./paths.ts";
 import { selfTest } from "./self-test.ts";
@@ -118,6 +117,11 @@ async function main(): Promise<void> {
   coordinator.on("log", (entry) => broadcast(IPC.logAppended, entry));
 
   setTrayState("disabled");
+
+  // Both keys are read now, so a key still in the Keychain is moved at launch
+  // — where its last prompt is expected — and never mid-command.
+  getApiKey();
+  getOpenRouterKey();
 
   // An update leaves every grant stale (see permissions/update.ts): clear them
   // and ask again before deciding whether the app is set up.
