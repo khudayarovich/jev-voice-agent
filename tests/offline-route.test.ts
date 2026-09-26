@@ -482,7 +482,8 @@ test("'lock Telegram' is not the Mac's lock", async () => {
   // From real use: it locked the Mac.
   const { calls, os } = recorder();
   await assert.rejects(execute("lock_screen", {}, os, ctx("Lock the telegram.", { runningApps: ["Finder", "Telegram"] })), /Telegram's own lock/);
-  assert.deepEqual(calls, []);
-  await execute("lock_screen", {}, os, ctx("lock the screen"));
-  assert.deepEqual(calls.map((c) => c.method), ["lockScreen"]);
+  assert.equal(calls.length, 0);
+  const { calls: c2, os: os2 } = recorder();
+  await execute("lock_screen", {}, os2, ctx("lock the screen"));
+  assert.deepEqual(c2.map((c) => c.method), ["lockScreen"]);
 });
