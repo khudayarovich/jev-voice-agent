@@ -110,13 +110,15 @@ export function explainLast(ctx: ActionContext): string {
 
 const squashName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-/** The front window's own search field, if it shows one. */
-async function searchBoxOnScreen(os: PlatformAdapter): Promise<{ i: number; label: string } | null> {
+/** The front window's own search: a field, or the button that opens one. */
+async function searchBoxOnScreen(os: PlatformAdapter): Promise<{ i: number; label: string; kind: "field" | "button" } | null> {
   const shot = await os.screenElements().catch(() => null);
   const elements: { i: number; role: string; label: string }[] = shot?.elements ?? [];
-  const box = elements.find((e) => e.role === "SearchField")
+  const field = elements.find((e) => e.role === "SearchField")
     ?? elements.find((e) => (e.role === "TextField" || e.role === "TextArea") && /search|find|filter/i.test(e.label));
-  return box ? { i: box.i, label: box.label } : null;
+  if (field) return { i: field.i, label: field.label, kind: "field" };
+  const button = elements.find((e) => e.role === "Button" && /^search$/i.test(e.label.trim()));
+  return button ? { i: button.i, label: button.label, kind: "button" } : null;
 }
 
 /** The apps the user can see, the one in front first — and never this one. */
@@ -702,8 +704,8 @@ export const ACTIONS = {
 
   find: action({
     describe:
-      "Open the find bar to search WITHIN the current document or page for text the user is looking at. Not for searching the internet.",
-    examples: ["find", "find in this page", "open the find bar"],
+      "Open the Cmd-F find bar to jump to text within the document or page already in front. Only when the user says find bar, find in this page, or command F — 'search for …' is the search command.",
+    examples: ["open the find bar", "find in this page", "press command f"],
     slots: {},
     async run(_a, os) {
       await os.keystroke({ key: "f", modifiers: ["command"] });
@@ -877,9 +879,11 @@ export const ACTIONS = {
 
   web_search: action({
     describe:
-      "Search the internet, or search one particular site such as YouTube, GitHub, Amazon or Wikipedia. Use whenever the user wants to look something up online: 'search for …', 'google …', 'search YouTube for …', 'play … on YouTube'. Not for searching inside the current document.",
+      "Search for something: on the web, on a site such as YouTube or Amazon, in the app in front using its own search box (Finder, Settings, a chat), or an app by name — 'search for FaceTime' opens FaceTime. Use for any 'search for …', 'look up …', 'google …', 'play … on YouTube'. Not the Cmd-F find bar.",
     examples: [
       "search for typescript generics",
+      "search for facetime",
+      "search for invoices in this folder",
       "google the weather",
       "look up pasta recipes",
       "search youtube for cats",
@@ -893,23 +897,29 @@ export const ACTIONS = {
         ]),
       ),
     },
-    async run({ query }, os, ctx) {
+    async run({ query: asked }, os, ctx) {
+      let query = asked;
       const said = ctx.transcript;
       const wantsWeb = /\b(?:web|online|internet|google|bing|duckduckgo|youtube|wikipedia|amazon|reddit|github|browser|\.com|\.org)\b/i.test(said);
+      // "In this folder", "in the window": where the user is looking.
+      const HERE = /\s*\b(?:in|inside|within)\s+(?:the\s+|this\s+)?(?:folder|finder|window|list|app|settings|applications folder|here)\b.*$/i;
+      const here = HERE.test(said);
+      query = query.replace(HERE, "").trim() || query;
       if (!wantsWeb) {
         // "Search for FaceTime": the app, not a Google page about it.
-        const app = [...ctx.runningApps, ...ctx.installedApps].find((a) => squashName(a) === squashName(query));
+        const app = here ? undefined : [...ctx.runningApps, ...ctx.installedApps].find((a) => squashName(a) === squashName(query));
         if (app) {
           await os.openApp(app);
           return { detail: `Opened ${app}`, app };
         }
-        // An app with a search box of its own in front — Finder, Settings,
-        // a chat, an editor: search there, as the user can see it.
+        // An app with a search of its own in front — Finder, Settings, a
+        // chat, an editor: search there, as the user can see it. Finder's is
+        // a button until pressed.
         if (ctx.focusedApp && !isBrowser(ctx.focusedApp)) {
           const box = await searchBoxOnScreen(os);
           if (box) {
-            await os.actOnElement(box.i, "focus", box.label);
-            await new Promise((r) => setTimeout(r, 150));
+            await os.actOnElement(box.i, box.kind === "button" ? "press" : "focus", box.label);
+            await new Promise((r) => setTimeout(r, box.kind === "button" ? 500 : 150));
             await typeOrFail(os, query, ctx.focusedApp);
             await os.keystroke({ key: "return" });
             return { detail: `Searched ${ctx.focusedApp} for “${query}”`, app: ctx.focusedApp };

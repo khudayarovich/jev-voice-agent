@@ -134,6 +134,10 @@ const CASES: Case[] = [
   { say: "Play a radio.", expect: ["click_on", "unknown_task"], env: { focusedApp: "Music", windowTitle: "Music" } },
   { say: "Can you up the sound?", expect: ["volume_up"] },
   { say: "Click on the next song.", expect: ["media_next", "click_on"] },
+  // --- searching where the user is -------------------------------------------
+  { say: "search for FaceTime.", expect: ["web_search", "open_app"], env: { focusedApp: "Finder", windowTitle: "Applications" } },
+  { say: "search for facetime in the applications folder", expect: ["web_search"], env: { focusedApp: "Finder", windowTitle: "Applications" } },
+  { say: "open the find bar", expect: ["find"] },
   // --- talking to apps -------------------------------------------------------
   { say: "Send a prompt to the open code saying hello.", expect: ["send_to_app"] },
   { say: "Open an open code.", expect: ["open_app"], target: "OpenCode" },

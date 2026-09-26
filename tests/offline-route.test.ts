@@ -417,6 +417,15 @@ test("'search for <an app>' opens the app; a front app's own search box is used;
   assert.deepEqual(c2.filter((c) => c.method === "actOnElement")[0]?.args, [7, "focus", "Search"]);
   assert.ok(c2.some((c) => c.method === "keystroke"));
 
+  // Finder's search is a button until pressed; "in this folder" means here, not the app of that name.
+  const { calls: c4, os: os4 } = recorder({
+    screenElements: { app: "Finder", elements: [{ i: 11, role: "Button", label: "Search", x: 0, y: 0, w: 1, h: 1 }] },
+    inputValue: "facetime",
+  });
+  const r4 = await execute("web_search", { query: "FaceTime in the applications folder" }, os4, ctx("search for facetime in the applications folder", { focusedApp: "Finder", installedApps: ["FaceTime"] }));
+  assert.equal(r4.detail, "Searched Finder for “FaceTime”");
+  assert.deepEqual(c4.filter((c) => c.method === "actOnElement")[0]?.args, [11, "press", "Search"]);
+
   const { calls: c3, os: os3 } = recorder({ browserTab: null });
   await execute("web_search", { query: "invoices" }, os3, ctx("search the web for invoices", { focusedApp: "Finder" }));
   assert.ok(!c3.some((c) => c.method === "screenElements"), "asked for the web: no search box looked for");
