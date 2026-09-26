@@ -1239,7 +1239,9 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env): Promise<
     clarifying = null;
     pending = null;
     coordinator.setState("executing", lesson.title);
-    const r = await serially(() => run("run_learned", { command: lesson.id }, tryCtx, null, false));
+    // Run here, not queued: this already runs inside the command queue, and
+    // queuing behind itself hung the agent at "thinking" for good.
+    const r = await run("run_learned", { command: lesson.id }, tryCtx, null, false);
     fileLog("learn", "did", { id: lesson.id, round, outcome: r.outcome, detail: r.detail });
     if (r.outcome !== "ok") {
       finish(u, s, r);
@@ -1278,7 +1280,7 @@ async function settleLesson(u: Utterance, s: Session, clause: string, e: Env, le
     clarifying = null;
     pending = null;
     coordinator.setState("executing", `Trying “${lesson.title}”…`);
-    const r = await serially(() => run("run_learned", { command: lesson.id }, tryCtx, null, false));
+    const r = await run("run_learned", { command: lesson.id }, tryCtx, null, false);
     keepLesson(u, s, lesson, r);
     return;
   }
