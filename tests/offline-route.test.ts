@@ -477,3 +477,12 @@ test("backspace takes a count, and a field can be cleared", async () => {
   await execute("clear_field", {}, os2, ctx("clear the input"));
   assert.deepEqual(c2.map((c) => c.args[0]), [{ key: "a", modifiers: ["command"] }, { key: "delete" }]);
 });
+
+test("'lock Telegram' is not the Mac's lock", async () => {
+  // From real use: it locked the Mac.
+  const { calls, os } = recorder();
+  await assert.rejects(execute("lock_screen", {}, os, ctx("Lock the telegram.", { runningApps: ["Finder", "Telegram"] })), /Telegram's own lock/);
+  assert.deepEqual(calls, []);
+  await execute("lock_screen", {}, os, ctx("lock the screen"));
+  assert.deepEqual(calls.map((c) => c.method), ["lockScreen"]);
+});

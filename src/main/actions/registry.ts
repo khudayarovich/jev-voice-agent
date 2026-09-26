@@ -458,10 +458,17 @@ export const ACTIONS = {
   }),
 
   lock_screen: action({
-    describe: "Lock the screen, requiring the password to return.",
+    describe:
+      "Lock the Mac's screen, requiring the password to return. Only the Mac itself: 'lock Telegram' or 'lock the notes' means that app's own lock, which is not this command.",
     examples: ["lock the screen", "lock my mac", "lock it"],
     slots: {},
-    async run(_a, os) {
+    async run(_a, os, ctx) {
+      // "Lock the Telegram": the app's own lock, not the Mac's. Observed in
+      // real use: it locked the Mac. Refused here, so the screen path takes it.
+      const named = ctx.transcript.match(/\block\s+(?:the\s+|my\s+)?(.+?)[.?!]*$/i)?.[1] ?? "";
+      const app = named && !/^(?:screen|mac|computer|laptop|it|this|display|the mac|my mac)$/i.test(named.trim())
+        ? [...ctx.runningApps, ...ctx.installedApps].find((a) => squashName(a) === squashName(named)) : undefined;
+      if (app) throw new Error(`Couldn't find a lock for ${app} on my own — that is ${app}'s own lock, not the Mac's`);
       await os.lockScreen();
       return { detail: "Locked" };
     },
