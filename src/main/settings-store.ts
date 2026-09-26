@@ -1,19 +1,29 @@
+import { execFileSync } from "node:child_process";
 import { app, safeStorage } from "electron";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { hostname, userInfo } from "node:os";
 import path from "node:path";
 import { DEFAULT_SETTINGS, type AppSettings } from "../shared/types.ts";
+import { deriveKey, newSalt, open, seal } from "./secrets.ts";
 
 /**
  * Persistent settings.
  *
- * The API key is kept out of the plain settings file and encrypted with
- * `safeStorage`, which on macOS is backed by the Keychain. It is never sent to a
- * renderer — the Settings UI only ever learns whether a key is present and what
- * its last four characters are.
+ * The API keys are kept out of the plain settings file, sealed by the app
+ * itself (see secrets.ts) — not by `safeStorage`, whose Keychain entry asked
+ * for permission again with every build and blocked the app at launch. A key
+ * still sealed the old way is opened once, with one last prompt, and moved.
+ * Keys are never sent to a renderer: the Settings UI only ever learns whether
+ * one is present and its last four characters.
  */
 
 interface Persisted extends AppSettings {
-  /** base64 of safeStorage.encryptString(apiKey) */
+  /** The salt the app's own sealing key is derived with. */
+  secretSalt?: string;
+  /** The keys, sealed by the app (secrets.ts). */
+  apiKeySealed?: string;
+  openRouterKeySealed?: string;
+  /** base64 of safeStorage.encryptString(apiKey): the old way, read once and moved. */
   apiKeyEnc?: string;
   /** Plain-text fallback, used only when OS encryption is unavailable. */
   apiKeyPlain?: string;
@@ -58,11 +68,73 @@ function persist(next: Persisted): void {
 
 export function getSettings(): AppSettings {
   const {
+    secretSalt: _s, apiKeySealed: _as, openRouterKeySealed: _os,
     apiKeyEnc: _e, apiKeyPlain: _p, apiKeyTail: _t,
     openRouterKeyEnc: _oe, openRouterKeyPlain: _op, openRouterKeyTail: _ot,
     ...rest
   } = load();
   return rest;
+}
+
+// ---------------------------------------------------------------------------
+// Sealing
+// ---------------------------------------------------------------------------
+
+let machineId: string | null = null;
+
+/** This Mac's hardware id, else its name: what the sealing key is bound to. */
+function machine(): string {
+  if (machineId) return machineId;
+  try {
+    const out = execFileSync("/usr/sbin/ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], { encoding: "utf8", timeout: 3000 });
+    machineId = out.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/)?.[1] ?? hostname();
+  } catch {
+    machineId = hostname();
+  }
+  return machineId;
+}
+
+let sealingKey: Buffer | null = null;
+
+function keyFor(s: Persisted): Buffer {
+  if (sealingKey) return sealingKey;
+  let salt = s.secretSalt;
+  if (!salt) {
+    salt = newSalt();
+    persist({ ...s, secretSalt: salt });
+  }
+  sealingKey = deriveKey(machine(), userInfo().username, Buffer.from(salt, "base64"));
+  return sealingKey;
+}
+
+function sealed(text: string): string {
+  return seal(keyFor(load()), text);
+}
+
+/**
+ * A key sealed the old way, opened once and moved: the Keychain may ask —
+ * for the last time.
+ */
+function moved(which: "apiKey" | "openRouterKey"): string {
+  const s = load();
+  const enc = s[`${which}Enc`];
+  if (!enc) return "";
+  let plain = "";
+  try {
+    plain = safeStorage.decryptString(Buffer.from(enc, "base64"));
+  } catch {
+    // Unreadable — the signing identity changed and access was refused.
+    return "";
+  }
+  if (plain) persist({ ...load(), [`${which}Sealed`]: sealed(plain), [`${which}Enc`]: undefined });
+  return plain;
+}
+
+function opened(which: "apiKey" | "openRouterKey"): string {
+  const s = load();
+  const box = s[`${which}Sealed`];
+  if (box) return open(keyFor(s), box) ?? "";
+  return moved(which);
 }
 
 export function updateSettings(patch: Partial<AppSettings>): AppSettings {
@@ -78,34 +150,17 @@ export function setApiKey(key: string): void {
   const trimmed = key.trim();
   const current = load();
   if (!trimmed) {
-    persist({ ...current, apiKeyEnc: undefined, apiKeyPlain: undefined, apiKeyTail: undefined });
+    persist({ ...current, apiKeySealed: undefined, apiKeyEnc: undefined, apiKeyPlain: undefined, apiKeyTail: undefined });
     return;
   }
-  const tail = trimmed.slice(-4);
-  if (safeStorage.isEncryptionAvailable()) {
-    persist({
-      ...current,
-      apiKeyEnc: safeStorage.encryptString(trimmed).toString("base64"),
-      apiKeyPlain: undefined,
-      apiKeyTail: tail,
-    });
-  } else {
-    // Better to work than to fail silently, but say so in the UI.
-    persist({ ...current, apiKeyEnc: undefined, apiKeyPlain: trimmed, apiKeyTail: tail });
-  }
+  persist({ ...current, apiKeySealed: sealed(trimmed), apiKeyEnc: undefined, apiKeyPlain: undefined, apiKeyTail: trimmed.slice(-4) });
 }
 
 /** Main-process only. Never expose this over IPC. */
 export function getApiKey(): string {
   const s = load();
-  if (s.apiKeyEnc) {
-    try {
-      return safeStorage.decryptString(Buffer.from(s.apiKeyEnc, "base64"));
-    } catch {
-      // Keychain item unreadable (e.g. after a signing-identity change).
-      return "";
-    }
-  }
+  const own = opened("apiKey");
+  if (own) return own;
   if (s.apiKeyPlain) return s.apiKeyPlain;
   // Convenience for development.
   return process.env.TYPESAFE_API_KEY?.trim() ?? "";
@@ -113,11 +168,11 @@ export function getApiKey(): string {
 
 export function apiKeySummary(): { present: boolean; tail: string; encrypted: boolean } {
   const s = load();
-  const present = Boolean(s.apiKeyEnc || s.apiKeyPlain || process.env.TYPESAFE_API_KEY);
+  const present = Boolean(s.apiKeySealed || s.apiKeyEnc || s.apiKeyPlain || process.env.TYPESAFE_API_KEY);
   return {
     present,
     tail: s.apiKeyTail ?? (process.env.TYPESAFE_API_KEY ? "(env)" : ""),
-    encrypted: Boolean(s.apiKeyEnc),
+    encrypted: Boolean(s.apiKeySealed || s.apiKeyEnc),
   };
 }
 
@@ -129,42 +184,27 @@ export function setOpenRouterKey(key: string): void {
   const trimmed = key.trim();
   const current = load();
   if (!trimmed) {
-    persist({ ...current, openRouterKeyEnc: undefined, openRouterKeyPlain: undefined, openRouterKeyTail: undefined });
+    persist({ ...current, openRouterKeySealed: undefined, openRouterKeyEnc: undefined, openRouterKeyPlain: undefined, openRouterKeyTail: undefined });
     return;
   }
-  const tail = trimmed.slice(-4);
-  if (safeStorage.isEncryptionAvailable()) {
-    persist({
-      ...current,
-      openRouterKeyEnc: safeStorage.encryptString(trimmed).toString("base64"),
-      openRouterKeyPlain: undefined,
-      openRouterKeyTail: tail,
-    });
-  } else {
-    persist({ ...current, openRouterKeyEnc: undefined, openRouterKeyPlain: trimmed, openRouterKeyTail: tail });
-  }
+  persist({ ...current, openRouterKeySealed: sealed(trimmed), openRouterKeyEnc: undefined, openRouterKeyPlain: undefined, openRouterKeyTail: trimmed.slice(-4) });
 }
 
 /** Main-process only. Never expose this over IPC. */
 export function getOpenRouterKey(): string {
   const s = load();
-  if (s.openRouterKeyEnc) {
-    try {
-      return safeStorage.decryptString(Buffer.from(s.openRouterKeyEnc, "base64"));
-    } catch {
-      return "";
-    }
-  }
+  const own = opened("openRouterKey");
+  if (own) return own;
   if (s.openRouterKeyPlain) return s.openRouterKeyPlain;
   return process.env.OPENROUTER_API_KEY?.trim() ?? "";
 }
 
 export function openRouterKeySummary(): { present: boolean; tail: string; encrypted: boolean } {
   const s = load();
-  const present = Boolean(s.openRouterKeyEnc || s.openRouterKeyPlain || process.env.OPENROUTER_API_KEY);
+  const present = Boolean(s.openRouterKeySealed || s.openRouterKeyEnc || s.openRouterKeyPlain || process.env.OPENROUTER_API_KEY);
   return {
     present,
     tail: s.openRouterKeyTail ?? (process.env.OPENROUTER_API_KEY ? "(env)" : ""),
-    encrypted: Boolean(s.openRouterKeyEnc),
+    encrypted: Boolean(s.openRouterKeySealed || s.openRouterKeyEnc),
   };
 }
