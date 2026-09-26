@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { globalShortcut } from "electron";
 import { randomUUID } from "node:crypto";
 import { IPC } from "../shared/ipc.ts";
+import { DEFAULT_SETTINGS } from "../shared/types.ts";
 import type { AppSettings, CommandLogEntry } from "../shared/types.ts";
 import { ALL_BROWSERS, expandApps, isBrowser, listNames } from "./actions/apps.ts";
 import { landedOn } from "./actions/browsing.ts";
@@ -28,6 +31,7 @@ import { buildVocabularyPrompt } from "./audio/vocabulary.ts";
 import { WakeWord } from "./audio/wake.ts";
 import { WhisperEngine } from "./audio/whisper.ts";
 import { coordinator } from "./coordinator.ts";
+import { switchesInputSource } from "./hotkey-conflict.ts";
 import { isSelfAudioActive, play } from "./earcons.ts";
 import { commandCatalog, lessonChecks } from "./learning/catalog.ts";
 import { type LearnedCommand, checkLesson, parameterValue, readVerdict, summarize, usesScreen } from "./learning/lesson.ts";
@@ -38,7 +42,7 @@ import * as jev from "./jev/client.ts";
 import { type RouteDecision, route } from "./jev/router.ts";
 import { log as fileLog } from "./log.ts";
 import { platform } from "./platform/index.ts";
-import { getOpenRouterKey, getSettings } from "./settings-store.ts";
+import { getOpenRouterKey, getSettings, updateSettings } from "./settings-store.ts";
 import { broadcast, createCapture, getCapture, hideHud, showHud, openSettings } from "./windows.ts";
 
 /**
@@ -137,7 +141,8 @@ async function doStart(): Promise<void> {
   coordinator.setState("idle");
 }
 
-export function stopListening(): void {
+export function stopListening(reason = "asked"): void {
+  fileLog("agent", "stopped", { reason });
   pipeline?.disarm();
   pipeline = null;
   pending = null;
@@ -161,7 +166,7 @@ export function applySettings(next: AppSettings): void {
   if (speech && speech.model !== next.sttModel && pipeline?.listening) {
     // Swap the speech model without making the user toggle listening off and on.
     fileLog("agent", "model-change", { from: speech.model, to: next.sttModel });
-    stopListening();
+    stopListening("model change");
     void startListening();
     return;
   }
@@ -964,7 +969,7 @@ async function run(
     // Asked which permission it needs: the answer is a pane, as much as words.
     if (action === "explain_last" && /permission/i.test(result.detail ?? "")) openSettings("permissions");
     // A couple of actions steer the agent itself rather than the OS.
-    if (action === "stop_listening") stopListening();
+    if (action === "stop_listening") stopListening("command");
     // Another command follows: let the app just opened actually come to the
     // front first, or "open Safari and open a new tab" sends its Cmd-T to
     // whatever was in front a moment ago.
@@ -1492,9 +1497,21 @@ function log(partial: Partial<CommandLogEntry> & { transcript: string }): void {
  * needs no extra permission, and is the fallback that keeps working when the
  * room is too noisy for the wake word.
  */
-function registerHotkey(accelerator: string): void {
+const OLD_DEFAULT_HOTKEY = "Control+Space";
+
+async function registerHotkey(accelerator: string): Promise<void> {
   unregisterHotkey();
   if (!accelerator) return;
+  // Never take a key macOS uses to switch keyboard layouts: the user switches
+  // all day, and every switch poked the agent. The old default moves on; a
+  // key the user chose is left alone, and the conflict is logged.
+  if (process.platform === "darwin" && (await switchesInputSourceHere(accelerator))) {
+    fileLog("hotkey", "conflict", { accelerator, with: "input source switching" });
+    if (accelerator !== OLD_DEFAULT_HOTKEY) return;
+    accelerator = DEFAULT_SETTINGS.hotkey;
+    updateSettings({ hotkey: accelerator });
+    fileLog("hotkey", "moved", { to: accelerator });
+  }
   try {
     const ok = globalShortcut.register(accelerator, () => {
       const p = pipeline;
@@ -1507,6 +1524,15 @@ function registerHotkey(accelerator: string): void {
   } catch (err) {
     fileLog("hotkey", "invalid", { accelerator, message: describe(err) });
     registeredHotkey = "";
+  }
+}
+
+async function switchesInputSourceHere(accelerator: string): Promise<boolean> {
+  try {
+    const { stdout } = await promisify(execFile)("/usr/bin/defaults", ["read", "com.apple.symbolichotkeys", "AppleSymbolicHotKeys"], { timeout: 3000 });
+    return switchesInputSource(stdout, accelerator);
+  } catch {
+    return false;
   }
 }
 

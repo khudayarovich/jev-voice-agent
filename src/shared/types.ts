@@ -147,7 +147,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   wakeWords: ["hey jeff", "hey jev"],
   wakeThreshold: 0.5,
   wakeWordEnabled: true,
-  hotkey: "Control+Space",
+  // Not Ctrl+Space or Ctrl+Option+Space: macOS uses those to switch keyboard layouts.
+  hotkey: "Control+Shift+Space",
   earcons: true,
   earconVolume: 0.5,
   model: "jev-latest",

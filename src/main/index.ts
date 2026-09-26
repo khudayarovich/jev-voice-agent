@@ -55,7 +55,7 @@ function installCrashGuard(): void {
   process.on("uncaughtException", (err) => {
     log("app", "uncaughtException", { message: err.message, stack: err.stack });
     try {
-      stopListening();
+      stopListening("crash");
     } catch {
       // Nothing useful left to do.
     }
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
   createTray({
     isListening: () => coordinator.isListening(),
     onToggleListening: () => {
-      if (coordinator.isListening()) stopListening();
+      if (coordinator.isListening()) stopListening("tray");
       else void startListening();
     },
     onOpenSettings: () => openSettings(),
@@ -219,7 +219,7 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.setListening, async (_e, on: boolean) => {
     if (on) await startListening();
-    else stopListening();
+    else stopListening("settings");
   });
 
   // One-way, high frequency: ~15 blocks a second for as long as the app listens.
