@@ -47,7 +47,9 @@ export function messageRequest(transcript: string, apps: string[]): { app: strin
   }
   const rest = words.join(" ").replace(/^\s*(?:and\s+)?/, "");
   const m = rest.match(
-    /^(?:(?:send|write|type|enter|submit|put)\s+(?:it\s+|him\s+|her\s+|them\s+)?(?:a\s+|the\s+|this\s+)?(?:prompt|message|text|question|command|task|tasks)?\s*(?:saying|that says|which says|with|of|:|,)?|ask\s+(?:it|him|her|them)?\s*(?:to\s+)?|tell\s+(?:it|him|her|them)?\s*(?:to\s+)?|open\s+(?:it\s+)?and\s+(?:send|ask|tell|type)\s+(?:it\s+)?(?:a\s+|the\s+)?(?:prompt|message)?\s*(?:saying|:|,)?)\s*(.*)$/i,
+    // "this", "a", "the" go only with "message", "prompt" and the like:
+    // "type this is sent by voice agent" starts with "this is".
+    /^(?:(?:send|write|type|enter|submit|put)\s+(?:it\s+|him\s+|her\s+|them\s+)?(?:(?:a|the|this)\s+(?=prompt|message|text|question|command|task))?(?:prompt|message|text|question|command|task|tasks)?\s*(?:saying|that says|which says|with|of|:|,)?|ask\s+(?:it|him|her|them)?\s*(?:to\s+)?|tell\s+(?:it|him|her|them)?\s*(?:to\s+)?|open\s+(?:it\s+)?and\s+(?:send|ask|tell|type)\s+(?:it\s+)?(?:(?:a|the)\s+(?=prompt|message))?(?:prompt|message)?\s*(?:saying|:|,)?)\s*(.*)$/i,
   );
   let text = m?.[1]?.trim() ?? null;
   if (text) {

@@ -33,3 +33,9 @@ test("'open Codex and send a prompt …' is two commands, the prompt kept whole"
   assert.equal(parts[0], "open Codex");
   assert.match(parts[1]!, /^send a prompt saying refactor the parser and add tests$/);
 });
+
+test("'this' at the start of the words is part of them", () => {
+  // From real use: "type this is sent by voice agent" sent "is sent by voice agent".
+  assert.deepEqual(messageRequest("Type this is sent by voice agent.", APPS), { app: null, text: "this is sent by voice agent" });
+  assert.deepEqual(messageRequest("send this message: hello", APPS), { app: null, text: "hello" });
+});
