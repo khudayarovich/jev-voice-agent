@@ -110,6 +110,14 @@ export function explainLast(ctx: ActionContext): string {
 
 const squashName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/** "18th date of calendar" → the Calendar app, and "18th date". */
+function appNamedIn(target: string, apps: string[]): { app: string; rest: string } | null {
+  const m = target.match(/^(.+?)\s+(?:in|on|of|inside|from|at)\s+(?:the\s+)?(.+?)(?:\s+app|\s+window)?$/i);
+  if (!m) return null;
+  const app = apps.find((a) => squashName(a) === squashName(m[2]!));
+  return app && m[1]!.trim() ? { app, rest: m[1]!.trim() } : null;
+}
+
 /** The front window's own search: a field, or the button that opens one. */
 async function searchBoxOnScreen(os: PlatformAdapter): Promise<{ i: number; label: string; kind: "field" | "button" } | null> {
   const shot = await os.screenElements().catch(() => null);
@@ -958,6 +966,18 @@ export const ACTIONS = {
       if (/^(?:again|it|that|this|the same(?: one| thing| button)?|same(?: one| button)?|once more|one more time|it again|that again)$/i.test(asked.trim())) {
         if (!ctx.lastClicked) throw new Error("Say what to click — nothing was clicked just now");
         target = ctx.lastClicked;
+      }
+      // "18th of Calendar", "Details in System Settings": that app's window,
+      // brought forward first. Observed in real use: Calendar had opened on
+      // another desktop, and the click landed in Finder.
+      const named = appNamedIn(target, ctx.runningApps);
+      if (named) {
+        target = named.rest;
+        if (ctx.focusedApp !== named.app) {
+          await os.openApp(named.app);
+          if (!(await os.waitForFrontmost((a) => a === named.app, 4000))) throw new Error(`${named.app} did not come to the front`);
+          await new Promise((r) => setTimeout(r, 300));
+        }
       }
       const nth = resultNumber(target);
       let r: ClickResult;

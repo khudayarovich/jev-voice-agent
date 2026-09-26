@@ -439,3 +439,15 @@ test("'click again' clicks what was clicked last; with nothing before, it asks",
   assert.match(r.detail ?? "", /^Clicked /);
   await assert.rejects(execute("click_on", { target: "it" }, os, ctx("click it")), /Say what to click/);
 });
+
+test("'click X of <app>' brings that app forward and clicks there", async () => {
+  // From real use: Calendar had opened on another desktop; the click landed in Finder.
+  const { calls, os } = recorder({ waitForFrontmost: true });
+  await execute("click_on", { target: "18th date of calendar" }, os, ctx("click on 18th date of calendar", { focusedApp: "Finder", runningApps: ["Finder", "Calendar"] }));
+  assert.deepEqual(calls.map((c) => c.method), ["openApp", "waitForFrontmost", "click"]);
+  assert.deepEqual(calls[2]?.args, [{ text: "18th date" }]);
+  // Already in front: straight to the click.
+  const { calls: c2, os: os2 } = recorder();
+  await execute("click_on", { target: "18 in calendar" }, os2, ctx("click 18 in calendar", { focusedApp: "Calendar", runningApps: ["Finder", "Calendar"] }));
+  assert.deepEqual(c2.map((c) => c.method), ["click"]);
+});

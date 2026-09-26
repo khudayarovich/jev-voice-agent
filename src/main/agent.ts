@@ -286,6 +286,11 @@ function currentEnv(): Promise<Env> {
  */
 const recent: { at: number; detail: string }[] = [];
 let lastClicked: { label: string; at: number } | null = null;
+/** The last command that ran, for "again": its action and arguments as resolved. */
+let lastRun: { action: ActionKey; args: Record<string, string | number>; at: number } | null = null;
+
+/** "Again", "once more", "do that again": the last command, over. */
+const REPEAT = /^(?:and\s+|now\s+|then\s+|please\s+)?(?:again|once more|one more time|do it again|do that again|repeat|repeat that|same again|the same again)[.!?]?$/i;
 
 /**
  * The talk so far: what was said and what came of it, failures included, and
@@ -701,6 +706,18 @@ async function onUtterance(u: Utterance): Promise<void> {
     return;
   }
 
+  // "Again": the last command, over — a switch of desktop, a volume step, a
+  // click. Observed in real use, "again" after a desktop switch went to the
+  // teacher, which could not tell what to repeat.
+  if (REPEAT.test(u.transcript.trim()) && lastRun && Date.now() - lastRun.at < RECENT_MS) {
+    if (!(await claimNow(u, generation, s))) return;
+    const again: RouteDecision = { action: lastRun.action, args: lastRun.args, confidence: 1, addressed: 1, risk: 0, offline: false, instant: true, ms: 0, inputTokens: 0 };
+    fileLog("route", "repeat", { action: again.action, args: again.args });
+    const e = await currentEnv();
+    await serially(() => runClauses(u, s, [u.transcript], [again], e, false));
+    return;
+  }
+
   // Clauses already run mid-sentence are not run again.
   await Promise.all(s.early);
   if (generation !== s.generation || s.finished) return;
@@ -968,6 +985,7 @@ async function run(
     fileLog("execute", "ok", { action, args, execMs, ...(result.app ? { app: result.app } : {}) });
     worldVersion++;
     remember(action, args, result, ctx);
+    if (action !== "run_learned" || learnedCommands().some((c) => c.id === args.command)) lastRun = { action, args, at: Date.now() };
     if (action === "run_learned" && learnedCommands().some((c) => c.id === args.command)) countUse(String(args.command));
     // Asked which permission it needs: the answer is a pane, as much as words.
     if (action === "explain_last" && /permission/i.test(result.detail ?? "")) openSettings("permissions");
@@ -1239,7 +1257,7 @@ async function learn(u: Utterance, s: Session, clause: string, e: Env, origin: "
     // "Click on apps" with nothing called that on screen: the teacher once
     // answered with the Applications folder. A click is a click; when the
     // screen has no such thing, that is the answer.
-    if (/^(?:and\s+|then\s+|please\s+)?(?:click|press|tap|select|choose)\b/i.test(clause) && !usesScreen(lesson)) {
+    if (verdict.done && /^(?:and\s+|then\s+|please\s+)?(?:click|press|tap|select|choose)\b/i.test(clause) && !usesScreen(lesson)) {
       const named = clause.replace(/^(?:and\s+|then\s+|please\s+)?(?:click|press|tap|select|choose)\s+(?:on\s+)?(?:the\s+)?/i, "").replace(/[.?!]+$/, "");
       fileLog("learn", "declined", { request: clause, reason: "not on screen", ms: Date.now() - started });
       finish(u, s, { outcome: "rejected", action: null, detail: `I don't see “${named}” on the screen`, decision: null });
