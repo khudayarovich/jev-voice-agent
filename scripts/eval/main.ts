@@ -134,6 +134,13 @@ const CASES: Case[] = [
   { say: "Play a radio.", expect: ["click_on", "unknown_task"], env: { focusedApp: "Music", windowTitle: "Music" } },
   { say: "Can you up the sound?", expect: ["volume_up"] },
   { say: "Click on the next song.", expect: ["media_next", "click_on"] },
+  // --- keys, folders, windows, from real use ---------------------------------
+  { say: "Open trash bin folder.", expect: ["open_folder"], target: "Trash" },
+  { say: "Click tab and enter.", expect: ["press_tab + press_enter"] },
+  { say: "press the tab key", expect: ["press_tab"] },
+  { say: "Open eye messages.", expect: ["open_app"], target: "Messages", mayAsk: true },
+  { say: "minimize the fire folks", expect: ["minimize_window"] },
+  { say: "Can you hear me?", expect: ["explain_last"] },
   // --- searching where the user is -------------------------------------------
   { say: "search for FaceTime.", expect: ["web_search", "open_app"], env: { focusedApp: "Finder", windowTitle: "Applications" } },
   { say: "search for facetime in the applications folder", expect: ["web_search"], env: { focusedApp: "Finder", windowTitle: "Applications" } },

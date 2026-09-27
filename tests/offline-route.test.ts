@@ -487,3 +487,22 @@ test("'lock Telegram' is not the Mac's lock", async () => {
   await execute("lock_screen", {}, os2, ctx("lock the screen"));
   assert.deepEqual(c2.map((c) => c.method), ["lockScreen"]);
 });
+
+test("the Trash is a folder; Tab is a key; minimise names its app; a bare 'to the input' is no text", async () => {
+  const { calls, os } = recorder({ waitForFrontmost: true });
+  const d = offlineRoute(ctx("open the trash folder"));
+  assert.equal(d.action, "open_folder");
+  await execute("open_folder", { folder: "Trash" }, os, ctx("open the trash"));
+  assert.match(String(calls[0]?.args[0]), /\.Trash$/);
+
+  await execute("press_tab", {}, os, ctx("press tab"));
+  assert.deepEqual(calls.at(-1)?.args, [{ key: "tab" }]);
+
+  const { calls: c2, os: os2 } = recorder({ waitForFrontmost: true });
+  const r = await execute("minimize_window", {}, os2, ctx("minimize the fire folks", { focusedApp: "Claude", runningApps: ["Claude", "Firefox"] }));
+  assert.equal(r.detail, "Minimised Firefox");
+  assert.deepEqual(c2.map((c) => c.method), ["openApp", "waitForFrontmost", "minimizeWindow"]);
+
+  assert.equal(offlineRoute(ctx("write to the input")).args.text, undefined);
+  assert.equal(offlineRoute(ctx("write hello to the input")).args.text, "hello");
+});

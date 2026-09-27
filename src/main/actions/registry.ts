@@ -98,6 +98,7 @@ async function mediaOutcome(os: PlatformAdapter, before: NowPlaying | null, key:
  * repeated as it was reported; a success is recalled as one.
  */
 export function explainLast(ctx: ActionContext): string {
+  if (/\b(?:can you hear me|are you (?:there|listening|awake|on)|do you hear me)\b/i.test(ctx.transcript)) return "Yes — I'm listening";
   const last = ctx.history?.at(-1);
   if (!last) return "Nothing has happened yet";
   const permission = last.detail.match(/\b([A-Z][\w ]*?) permission\b/)?.[1];
@@ -109,6 +110,18 @@ export function explainLast(ctx: ActionContext): string {
 }
 
 const squashName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** The running app these words name — "the Claude code", "fire folks" heard for Firefox — or null. */
+function appInWords(words: string, apps: string[]): string | null {
+  const said = words.replace(/[.?!]+$/, "").replace(/\s+(?:app|window|application)$/i, "").trim();
+  if (!said) return null;
+  const exact = apps.find((a) => squashName(a) === squashName(said));
+  if (exact) return exact;
+  // "Claude code" for Claude, "fire folks" for Firefox: the first word carries it.
+  const head = squashName(said.split(/\s+/)[0]!);
+  const byHead = apps.filter((a) => head.length >= 4 && squashName(a).startsWith(head));
+  return byHead.length === 1 ? byHead[0]! : null;
+}
 
 /** "18th date of calendar" → the Calendar app, and "18th date". */
 function appNamedIn(target: string, apps: string[]): { app: string; rest: string } | null {
@@ -259,12 +272,19 @@ export const ACTIONS = {
   }),
 
   minimize_window: action({
-    describe: "Minimise the front window to the Dock.",
-    examples: ["minimize this", "minimise the window"],
+    describe: "Minimise the front window to the Dock — or the named app's window: 'minimize Firefox'.",
+    examples: ["minimize this", "minimise the window", "minimize firefox"],
     slots: {},
-    async run(_a, os) {
+    async run(_a, os, ctx) {
+      // "Minimize the Claude code": that app's window, brought forward first.
+      const named = appInWords(ctx.transcript.replace(/^(?:and\s+|please\s+)?(?:minimi[sz]e|hide)\s+(?:the\s+)?/i, ""), ctx.runningApps);
+      if (named && ctx.focusedApp !== named) {
+        await os.openApp(named);
+        if (!(await os.waitForFrontmost((a) => a === named, 4000))) throw new Error(`${named} did not come to the front`);
+        await new Promise((r) => setTimeout(r, 250));
+      }
       await os.minimizeWindow();
-      return { detail: "Minimised" };
+      return { detail: named ? `Minimised ${named}` : "Minimised" };
     },
   }),
 
@@ -636,6 +656,8 @@ export const ACTIONS = {
       "what happened",
       "what did you just do",
       "what do you need",
+      "can you hear me",
+      "are you listening",
       "did you do it",
       "have you done it",
       "did that work",
@@ -751,15 +773,26 @@ export const ACTIONS = {
     slots: {
       text: textSlot("The exact words to type", (t) =>
         afterPhrase(t, ["type out", "type", "write out", "write", "dictate", "insert"])?.replace(
-          /\s+(?:to|in|into|on)\s+(?:the\s+|its\s+)?(?:input|input field|chat|text field|prompt|box|field)(?:\s+field)?$/i,
+          /(?:^|\s+)(?:to|in|into|on)\s+(?:the\s+|its\s+)?(?:input|input field|chat|text field|prompt|box|field)(?:\s+field)?$/i,
           "",
-        ) ?? null,
+        ).trim() || null,
       ),
     },
     async run({ text }, os, ctx) {
       const landed = await typeOrFail(os, text, ctx.focusedApp || "the front window");
       const shown = `"${text.slice(0, 48)}${text.length > 48 ? "…" : ""}"`;
       return { detail: landed === "yes" ? `Typed ${shown}` : `Typed ${shown} — couldn't confirm it landed` };
+    },
+  }),
+
+  press_tab: action({
+    describe:
+      "Press the Tab key on the keyboard, to move to the next field or insert a tab: 'press tab', 'hit tab', 'tab key', 'click tab and enter'. Not a browser tab, which is clicked or opened.",
+    examples: ["press tab", "hit tab", "tab key", "press the tab key"],
+    slots: {},
+    async run(_a, os) {
+      await os.keystroke({ key: "tab" });
+      return { detail: "Tab" };
     },
   }),
 

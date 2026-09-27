@@ -183,6 +183,8 @@ test("'close <a running app>' closes its window, with no model", () => {
   assert.deepEqual(instantRoute("Close Telegram.", ctx())?.args, { app: "Telegram" });
   assert.equal(instantRoute("close telegram", ctx())?.action, "close_app_window");
   assert.equal(instantRoute("close notes", ctx()), null, "not running: the model reads it");
+  // "The browser": the one in use, with no model either.
+  assert.deepEqual(instantRoute("close the browser", ctx({ focusedApp: "Safari" }))?.args, { app: "Safari" });
 });
 
 test("anything inexact, unknown or destructive still goes to Jev", () => {

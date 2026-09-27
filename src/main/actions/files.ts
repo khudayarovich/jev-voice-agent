@@ -15,6 +15,7 @@ export const FOLDERS: Record<string, string> = {
   Movies: path.join(homedir(), "Movies"),
   Applications: "/Applications",
   Home: homedir(),
+  Trash: path.join(homedir(), ".Trash"),
 };
 
 const FOLDER_WORDS: Record<string, string[]> = {
@@ -26,6 +27,7 @@ const FOLDER_WORDS: Record<string, string[]> = {
   Movies: ["movies", "videos folder"],
   Applications: ["applications", "apps folder", "applications folder"],
   Home: ["home", "home folder", "my folder", "user folder"],
+  Trash: ["trash", "trash bin", "trash folder", "bin", "bin folder", "recycle bin", "rubbish bin", "deleted files"],
 };
 
 const norm = (s: string) => ` ${s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim()} `;

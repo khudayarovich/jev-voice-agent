@@ -816,7 +816,7 @@ async function runClauses(
     // from the screen and the request, rather than given up on.
     if (canLearn() && worthWorkingOut(d, r)) {
       fileLog("agent", "working-out", { clause: clauses[i], action: d.action, outcome: r.outcome, detail: r.detail });
-      await learn(u, s, clauses[i]!, e, "failure", d.action ? { action: d.action, detail: r.detail } : undefined);
+      await learn(u, s, clauses[i]!, e, "failure", d.action ? { action: d.action, args: d.args, detail: r.detail } : undefined);
       return;
     }
 
@@ -1174,7 +1174,7 @@ async function learn(
   clause: string,
   e: Env,
   origin: "unknown" | "failure" = "unknown",
-  failed?: { action: string; detail: string },
+  failed?: { action: string; args: Record<string, string | number>; detail: string },
 ): Promise<void> {
   const settings = getSettings();
   s.finished = true;
@@ -1258,7 +1258,9 @@ async function learn(
     const lesson = checked.command;
     // The very command that just failed, proposed again as the whole plan:
     // it would fail the same way. The first failure stands as the answer.
-    if (failed && lesson.steps.length === 1 && lesson.steps[0]!.do === "action" && lesson.steps[0]!.action === failed.action) {
+    const first = lesson.steps[0]!;
+    const sameArgs = first.do === "action" && Object.entries(first.args).every(([k, v]) => String(failed?.args[k] ?? "").toLowerCase() === v.toLowerCase());
+    if (failed && lesson.steps.length === 1 && first.do === "action" && first.action === failed.action && sameArgs) {
       fileLog("learn", "declined", { request: clause, reason: `the same ${failed.action} again`, ms: Date.now() - started });
       finish(u, s, { outcome: "failed", action: null, detail: failed.detail, decision: null });
       return;

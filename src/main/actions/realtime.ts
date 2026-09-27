@@ -2,6 +2,7 @@ import { parameterValue } from "../learning/lesson.ts";
 import { missingSlots } from "./execute.ts";
 import { rankActions } from "./rank.ts";
 import { ACTIONS, ACTION_KEYS, type ActionKey } from "./registry.ts";
+import { pickBrowser } from "./apps.ts";
 import { siteNamed } from "./parse.ts";
 import { SETTINGS_HOME, paneNamed } from "./settings-panes.ts";
 import { type RouteDecision, certainChoice, resolveLocalSlots } from "./resolve.ts";
@@ -214,8 +215,8 @@ export function instantRoute(transcript: string, ctx: ActionContext): RouteDecis
   const closed = t.match(CLOSE_APP)?.[1];
   if (closed) {
     const wanted = squash(closed);
-    const app = ctx.runningApps.find((a) => squash(a) === wanted);
-    if (app) return decision("close_app_window", { app });
+    const app = wanted === "browser" ? pickBrowser({ ...ctx, transcript }) : ctx.runningApps.find((a) => squash(a) === wanted);
+    if (app && ctx.runningApps.includes(app)) return decision("close_app_window", { app });
   }
 
   // A site known by name, with no app of exactly that name: a website, for
