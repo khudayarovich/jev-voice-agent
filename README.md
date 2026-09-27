@@ -31,6 +31,10 @@ It lives in the menu bar. On first launch Settings opens, and the speech model
    bluntly.
 2. **Permissions** — grant Microphone and Accessibility. macOS asks for
    Automation separately, per app, the first time a command needs it.
+3. **Learning** (optional) — paste an [OpenRouter](https://openrouter.ai) key.
+   With it, anything Jev has no command for is worked out live: the agent
+   reads the screen, asks GPT‑6 Luna for the steps, does them, and looks
+   again until it is done; commands that work anywhere are remembered.
 
 Then say *"Hey Jeff, open Safari"*. Or *"Hey Jeff, set the volume to thirty
 percent"*, *"take a selfie"*, *"search YouTube for lofi music"*, *"open
@@ -69,8 +73,12 @@ To build the installer yourself, `npm run dist` produces
 `release.noindex/JevVoiceAgent-<version>-arm64.dmg` (the `.noindex` keeps the
 unpacked app it also leaves there out of Spotlight, so search finds only the
 installed copy), with a self-contained speech engine
-built for any Apple Silicon Mac. Set `CSC_NAME` to a Developer ID certificate to
-sign it properly; otherwise it is signed ad hoc.
+built for any Apple Silicon Mac. It is signed ad hoc, so macOS forgets its
+permission grants with every build; `JVA_SIGN_IDENTITY="<certificate name>" npm
+run dist:signed` signs with a code-signing certificate of your own (Keychain
+Access → Certificate Assistant, type "Code Signing", then trust it for code
+signing), and the grants survive updates. A Developer ID is still needed for
+notarized distribution.
 
 ## How it works
 
