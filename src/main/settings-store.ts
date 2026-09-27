@@ -174,11 +174,13 @@ export function getApiKey(): string {
 
 export function apiKeySummary(): { present: boolean; tail: string; encrypted: boolean } {
   const s = load();
-  const present = Boolean(s.apiKeySealed || s.apiKeyEnc || s.apiKeyPlain || process.env.TYPESAFE_API_KEY);
+  // Present means readable: a sealed key that cannot be opened is no key,
+  // and the app must say so and open Settings, not run without one.
+  const present = getApiKey() !== "";
   return {
     present,
-    tail: s.apiKeyTail ?? (process.env.TYPESAFE_API_KEY ? "(env)" : ""),
-    encrypted: Boolean(s.apiKeySealed || s.apiKeyEnc),
+    tail: present ? (s.apiKeyTail ?? (process.env.TYPESAFE_API_KEY ? "(env)" : "")) : "",
+    encrypted: present && Boolean(s.apiKeySealed || s.apiKeyEnc),
   };
 }
 
@@ -208,10 +210,10 @@ export function getOpenRouterKey(): string {
 
 export function openRouterKeySummary(): { present: boolean; tail: string; encrypted: boolean } {
   const s = load();
-  const present = Boolean(s.openRouterKeySealed || s.openRouterKeyEnc || s.openRouterKeyPlain || process.env.OPENROUTER_API_KEY);
+  const present = getOpenRouterKey() !== "";
   return {
     present,
-    tail: s.openRouterKeyTail ?? (process.env.OPENROUTER_API_KEY ? "(env)" : ""),
-    encrypted: Boolean(s.openRouterKeySealed || s.openRouterKeyEnc),
+    tail: present ? (s.openRouterKeyTail ?? (process.env.OPENROUTER_API_KEY ? "(env)" : "")) : "",
+    encrypted: present && Boolean(s.openRouterKeySealed || s.openRouterKeyEnc),
   };
 }
