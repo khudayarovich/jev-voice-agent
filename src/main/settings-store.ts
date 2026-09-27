@@ -101,7 +101,7 @@ function keyFor(s: Persisted): Buffer {
   let salt = s.secretSalt;
   if (!salt) {
     salt = newSalt();
-    persist({ ...s, secretSalt: salt });
+    persist({ ...load(), secretSalt: salt });
   }
   sealingKey = deriveKey(machine(), userInfo().username, Buffer.from(salt, "base64"));
   return sealingKey;
@@ -126,7 +126,12 @@ function moved(which: "apiKey" | "openRouterKey"): string {
     // Unreadable — the signing identity changed and access was refused.
     return "";
   }
-  if (plain) persist({ ...load(), [`${which}Sealed`]: sealed(plain), [`${which}Enc`]: undefined });
+  if (plain) {
+    // Sealed first: sealing may persist a fresh salt, which a snapshot of the
+    // settings taken before it would then overwrite — and lose, with the keys.
+    const box = sealed(plain);
+    persist({ ...load(), [`${which}Sealed`]: box, [`${which}Enc`]: undefined });
+  }
   return plain;
 }
 
@@ -153,7 +158,8 @@ export function setApiKey(key: string): void {
     persist({ ...current, apiKeySealed: undefined, apiKeyEnc: undefined, apiKeyPlain: undefined, apiKeyTail: undefined });
     return;
   }
-  persist({ ...current, apiKeySealed: sealed(trimmed), apiKeyEnc: undefined, apiKeyPlain: undefined, apiKeyTail: trimmed.slice(-4) });
+  const box = sealed(trimmed);
+  persist({ ...load(), apiKeySealed: box, apiKeyEnc: undefined, apiKeyPlain: undefined, apiKeyTail: trimmed.slice(-4) });
 }
 
 /** Main-process only. Never expose this over IPC. */
@@ -187,7 +193,8 @@ export function setOpenRouterKey(key: string): void {
     persist({ ...current, openRouterKeySealed: undefined, openRouterKeyEnc: undefined, openRouterKeyPlain: undefined, openRouterKeyTail: undefined });
     return;
   }
-  persist({ ...current, openRouterKeySealed: sealed(trimmed), openRouterKeyEnc: undefined, openRouterKeyPlain: undefined, openRouterKeyTail: trimmed.slice(-4) });
+  const box = sealed(trimmed);
+  persist({ ...load(), openRouterKeySealed: box, openRouterKeyEnc: undefined, openRouterKeyPlain: undefined, openRouterKeyTail: trimmed.slice(-4) });
 }
 
 /** Main-process only. Never expose this over IPC. */
