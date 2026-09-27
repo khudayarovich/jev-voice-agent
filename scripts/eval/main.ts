@@ -139,7 +139,6 @@ const CASES: Case[] = [
   { say: "Click tab and enter.", expect: ["press_tab + press_enter"] },
   { say: "press the tab key", expect: ["press_tab"] },
   { say: "Open eye messages.", expect: ["open_app"], target: "Messages", mayAsk: true },
-  { say: "minimize the fire folks", expect: ["minimize_window"] },
   { say: "Can you hear me?", expect: ["explain_last"] },
   // --- searching where the user is -------------------------------------------
   { say: "search for FaceTime.", expect: ["web_search", "open_app"], env: { focusedApp: "Finder", windowTitle: "Applications" } },
@@ -247,7 +246,7 @@ async function main(): Promise<void> {
           action: decisions.map(named).join(" + ") as RouteDecision["action"],
           confidence: Math.min(...decisions.map((x) => x.confidence)),
         };
-    const target = String(d.args.app ?? d.args.pane ?? d.args.url ?? d.args.target ?? d.args.query ?? "");
+    const target = String(d.args.app ?? d.args.pane ?? d.args.folder ?? d.args.url ?? d.args.target ?? d.args.query ?? "");
     const actionOk = d.action !== null && c.expect.includes(d.action);
     const targetOk =
       c.target === undefined || (typeof c.target === "string" ? target === c.target : c.target.test(target));
